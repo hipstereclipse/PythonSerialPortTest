@@ -16,19 +16,25 @@ class GaugeProtocol(ABC):
 class PPG550Protocol(GaugeProtocol):
     """Protocol handler for PPG550 gauge - uses MKS-compatible ASCII format"""
 
-    def create_command(self, command: GaugeCommand) -> str:  # Note: returns str, not bytes
-        # PPG550 uses MKS-compatible format: @<addr><cmd><?/!><params>;FF
-        cmd = f"@254{command.name}"
+    def __init__(self, address: int = 254):
+        # Initialize with default address 254 if none provided
+        self.address = address
 
+    def create_command(self, command: GaugeCommand) -> bytes:
+        """Create command string and convert to bytes."""
+        # Build the command string
+        cmd = f"@{self.address}{command.name}"
         if command.command_type == "?":
             cmd += "?"
         elif command.command_type == "!" and command.parameters:
             cmd += f"!{command.parameters.get('value', '')}"
-
         cmd += ";FF"
-        return cmd  # Return string instead of bytes
+
+        # Return as bytes
+        return cmd.encode('ascii')
 
     def parse_response(self, response: bytes) -> GaugeResponse:
+        """Parse response and handle different formats."""
         try:
             # Remove @ACK and ;FF from response
             decoded = response.decode('ascii').strip()
@@ -50,27 +56,16 @@ class PPG550Protocol(GaugeProtocol):
                 error_message=str(e)
             )
 
-    def parse_response(self, response: bytes) -> GaugeResponse:
-        try:
-            # Remove @ACK and ;FF from response
-            decoded = response.decode('ascii').strip()
-            if decoded.startswith('@ACK'):
-                decoded = decoded[4:]
-            if decoded.endswith(';FF'):
-                decoded = decoded[:-3]
-
-            return GaugeResponse(
-                raw_data=response,
-                formatted_data=decoded,
-                success=True
-            )
-        except Exception as e:
-            return GaugeResponse(
-                raw_data=response,
-                formatted_data="",
-                success=False,
-                error_message=str(e)
-            )
+    def test_commands(self) -> list[bytes]:
+        """Generate test commands for debugging."""
+        # Create commands to check connection; here are examples for product name, version, etc.
+        commands = [
+            f"@{self.address}PRD?;FF",  # Command to get product name
+            f"@{self.address}SWV?;FF",  # Command to get software version
+            f"@{self.address}SER?;FF"  # Command to get serial number
+        ]
+        # Return commands as encoded ASCII bytes
+        return [cmd.encode('ascii') for cmd in commands]
 
 class PCG550Protocol(GaugeProtocol):
     """Protocol handler for PCG550/PSG550 gauges"""

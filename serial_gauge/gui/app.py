@@ -55,6 +55,7 @@ class GaugeApp:
     def on_gauge_change(self, *args):
         """Handle gauge type change"""
         gauge_type = self.selected_gauge.get()
+
         if gauge_type in GAUGE_PARAMETERS:
             # Get default settings for selected gauge
             params = GAUGE_PARAMETERS[gauge_type]
@@ -72,13 +73,23 @@ class GaugeApp:
 
             # Update GUI and log the change
             self.log_message(f"\nChanged to {gauge_type}")
-            self.log_message(f"Updated serial settings to match gauge defaults:")
+            self.log_message("Updated serial settings to match gauge defaults:")
             self.log_message(f"Baudrate: {params['baudrate']}")
-            self.log_message(f"Device ID: {params['device_id']:#x}")
 
-            # Show updated settings
+            # Log the appropriate identifier based on gauge type
+            if gauge_type == "PPG550":
+                # Use 'address' for PPG550 instead of 'device_id'
+                self.log_message(f"Address: {params.get('address', 'N/A')}")
+            elif gauge_type in ["PCG550", "MAG500", "MPG500"]:
+                # Use 'device_id' for other gauges
+                self.log_message(f"Device ID: {params.get('device_id', 'N/A'):#x}")
+            else:
+                self.log_message("Unknown gauge type selected.")
+
+            # Show updated settings in the UI
             self.show_port_settings()
-
+        else:
+            self.log_message("Selected gauge type not found in GAUGE_PARAMETERS.")
     def create_gui(self):
         """Create all GUI elements."""
         # Connection Frame
@@ -264,27 +275,49 @@ class GaugeApp:
                     stopbits=self.current_serial_settings['stopbits'],
                     timeout=1
                 )
+                # Create temporary communicator for formatting
+                temp_communicator = GaugeCommunicator(
+                    port=self.selected_port.get(),
+                    gauge_type=self.selected_gauge.get(),
+                    logger=self
+                )
+                temp_communicator.ser = temp_ser
+                temp_communicator.set_output_format(self.output_format.get())
             except Exception as e:
                 self.log_message(f"Could not open port: {str(e)}")
                 return
         else:
             temp_ser = self.communicator.ser
+            temp_communicator = self.communicator
 
         try:
-            # Determine if command is hex or ASCII
+            # Strip whitespace and remove any 'b' prefix if present
+            command = command.strip()
+            if command.startswith("b'") or command.startswith('b"'):
+                command = command[2:-1]
+
+            # Convert input to bytes based on simple hex check
             if command.startswith('0x') or all(c in '0123456789ABCDEFabcdef ' for c in command):
                 cmd_bytes = bytes.fromhex(command.replace('0x', '').replace(' ', ''))
             else:
                 cmd_bytes = command.encode('ascii')
 
-            self.log_message(f"Sending manual command: {' '.join(f'{b:02x}' for b in cmd_bytes)}")
-            temp_ser.write(cmd_bytes)
+            # Log formatted command using existing formatter
+            formatted_cmd = temp_communicator.format_command(cmd_bytes)
+            self.log_message(f"Sending command: {formatted_cmd}")
 
-            # Read response, if any
-            time.sleep(0.1)  # Short delay for response to arrive
-            response = temp_ser.read(temp_ser.in_waiting or 64)  # Adjust buffer size as needed
+            # Send command
+            temp_ser.write(cmd_bytes)
+            temp_ser.flush()
+
+            # Read response with a short delay
+            time.sleep(0.1)
+            response = temp_ser.read(temp_ser.in_waiting or 64)
+
             if response:
-                self.log_message(f"Received response: {' '.join(f'{b:02x}' for b in response)}")
+                # Format response using existing formatter
+                formatted_response = temp_communicator.format_response(response)
+                self.log_message(f"Received response: {formatted_response}")
             else:
                 self.log_message("No response received")
 
@@ -296,7 +329,6 @@ class GaugeApp:
             if temp_ser and (not self.communicator or temp_ser != self.communicator.ser):
                 temp_ser.close()
                 self.log_message("Temporary connection closed.")
-
     def send_command(self, command_name: str, command_type: str, parameters: Optional[Dict[str, Any]] = None):
         """Send command through communicator"""
         if not self.communicator:

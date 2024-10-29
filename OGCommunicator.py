@@ -55,7 +55,7 @@ def check_log_file():
 part_number = ""
 serial_number = ""
 
-ser = serial.Serial(port="COM5", baudrate=57600, bytesize=8, timeout=5, stopbits=serial.STOPBITS_ONE)
+ser = serial.Serial(port="COM1", baudrate=9600, bytesize=8, timeout=5, stopbits=serial.STOPBITS_ONE)
 
 def send_command(command):
     # Send the command to the gauge with a delay for processing
