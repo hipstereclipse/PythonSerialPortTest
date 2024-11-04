@@ -38,8 +38,6 @@ class GaugeCommunicator:
         # RS mode configuration
         self.rs_modes = params.get("rs_modes", ["RS232"])
         self.rs_mode = "RS232"  # Default to RS232
-        self.rs485_mode = False
-        self.rs485_address = params.get("address", 254)  # Default to global address
 
         # Serial port configuration defaults
         self.bytesize = serial.EIGHTBITS
@@ -55,19 +53,6 @@ class GaugeCommunicator:
             return
         self.rs_mode = mode
         self.logger.debug(f"RS mode set to: {mode}")
-
-    def set_rs485_mode(self, enabled: bool, address: int = 254):
-        """Configure RS485 mode settings"""
-        self.rs485_mode = enabled
-        self.rs485_address = address
-        if hasattr(self.protocol, 'address'):
-            self.protocol.address = address
-        self.logger.debug(f"RS485 mode: {'enabled' if enabled else 'disabled'}, Address: {address}")
-
-    def apply_serial_settings(self, settings: dict):
-        """Apply new serial port settings."""
-        if 'rs485_enabled' in settings:
-            self.set_rs485_mode(settings['rs485_enabled'], settings.get('rs485_address', 254))
 
     def set_output_format(self, format_type: str):
         """Set the output format type and update protocol if needed"""
@@ -117,7 +102,7 @@ class GaugeCommunicator:
             return f"Error formatting response: {str(e)}"
 
     def connect(self) -> bool:
-        """Establish connection to the gauge."""
+        """Establish connection to the gauge with improved handshaking."""
         try:
             self.ser = serial.Serial(
                 port=self.port,
@@ -132,15 +117,14 @@ class GaugeCommunicator:
                 dsrdtr=False
             )
 
-            # Configure port based on RS485 mode
+            # Initial port configuration based on mode
             self.ser.setDTR(True)
-            if not self.rs485_mode:
-                self.ser.setRTS(True)  # Keep RTS high for RS232
-            else:
+            if self.rs_mode == "RS232":
+                self.ser.setRTS(True)
+            else:  # RS485
                 self.ser.setRTS(False)  # Start with RTS low for RS485
-                self.logger.debug(f"RS485 mode enabled with address: {self.rs485_address}")
 
-            time.sleep(0.2)  # Allow port settings to settle
+            time.sleep(0.2)
 
             self.ser.reset_input_buffer()
             self.ser.reset_output_buffer()
@@ -148,41 +132,31 @@ class GaugeCommunicator:
             test_commands = self.protocol.test_commands()
             for cmd_bytes in test_commands:
                 try:
-                    if self.gauge_type == "PPG550":
-                        self.logger.debug(f"Testing connection with: {cmd_bytes.decode('ascii')}")
-                    else:
-                        self.logger.debug(f"Testing connection with: {' '.join(f'{b:02x}' for b in cmd_bytes)}")
+                    formatted_cmd = self.format_command(cmd_bytes)
+                    self.logger.debug(f"Testing connection with: {formatted_cmd}")
 
-                    # For PPG550, add carriage return and line feed if not present
-                    if self.gauge_type == "PPG550" and not cmd_bytes.endswith(b'\r\n'):
+                    # For PPG550, add carriage return and line feed
+                    if self.gauge_type == "PPG550":
                         cmd_bytes += b'\r\n'
 
                     # Handle RS485 transmission
-                    if self.rs485_mode:
+                    if self.rs_mode == "RS485":
                         self.ser.setRTS(True)  # Enable transmitter
-                        time.sleep(0.002)  # 2ms delay before transmission
+                        time.sleep(0.001)  # Small delay before transmission
 
                     self.ser.write(cmd_bytes)
                     self.ser.flush()
 
-                    if self.rs485_mode:
-                        time.sleep(0.002)  # 2ms delay after transmission
+                    if self.rs_mode == "RS485":
                         self.ser.setRTS(False)  # Switch to receive mode
 
-                    time.sleep(0.1)  # Wait for response
+                    time.sleep(0.3)
 
                     if self.ser.in_waiting:
                         response = self.read_response()
                         if response:
-                            if self.gauge_type == "PPG550":
-                                try:
-                                    printable_response = bytes(b for b in response if b >= 32 or b in [10, 13])
-                                    self.logger.debug(
-                                        f"Got response: {printable_response.decode('ascii', errors='ignore')}")
-                                except Exception as e:
-                                    self.logger.debug(f"Got raw response: {' '.join(f'{b:02x}' for b in response)}")
-                            else:
-                                self.logger.debug(f"Got response: {' '.join(f'{b:02x}' for b in response)}")
+                            formatted_response = self.format_response(response)
+                            self.logger.debug(f"Got response: {formatted_response}")
                             return True
 
                     self.ser.reset_input_buffer()
@@ -202,32 +176,10 @@ class GaugeCommunicator:
                 self.ser.close()
             return False
 
-    def send_quick_command(self, command_name: str, command_type: str,
-                           parameters: Optional[Dict[str, Any]] = None) -> str:
-        """Send a predefined quick command"""
-        try:
-            command = GaugeCommand(
-                name=command_name,
-                command_type=command_type,
-                parameters=parameters
-            )
-
-            response = self.send_command(command)
-            return response
-
-        except Exception as e:
-            self.logger.error(f"Quick command failed: {str(e)}")
-            return f"Error: {str(e)}"
-
     def send_command(self, command: GaugeCommand) -> str:
         """Send command and return formatted response"""
         if not self.ser or not self.ser.is_open:
-            return GaugeResponse(
-                raw_data=None,
-                formatted_data="Not connected",
-                success=False,
-                error_message="Not connected"
-            )
+            return "Not connected"
 
         try:
             # Clear buffers
@@ -238,31 +190,40 @@ class GaugeCommunicator:
             cmd_bytes = self.protocol.create_command(command)
 
             # Handle RS485 transmission
-            if self.rs485_mode:
+            if self.rs_mode == "RS485":
                 self.ser.setRTS(True)  # Enable transmitter
-                time.sleep(0.002)  # 2ms delay before transmission
+                time.sleep(0.001)  # Small delay before transmission
+
+            # Format and log the command based on gauge type
+            formatted_cmd = (
+                cmd_bytes.decode('ascii', errors='ignore')
+                if self.output_format == "ASCII"
+                else self.format_command(cmd_bytes)
+            )
+
+            self.logger.debug(f"Sending command: {formatted_cmd}")
 
             # Send command
-            self.logger.debug(f"> {cmd_bytes.decode('ascii', errors='replace')}")
             self.ser.write(cmd_bytes)
             self.ser.flush()
 
-            if self.rs485_mode:
-                time.sleep(0.002)  # 2ms delay after transmission
+            if self.rs_mode == "RS485":
                 self.ser.setRTS(False)  # Switch to receive mode
 
-            # Wait for response
-            time.sleep(0.1)
-            response_bytes = self.read_response()
+            # Read response
+            time.sleep(0.2)
+            response = self.read_response()
 
-            if response_bytes:
-                # Parse response using protocol handler
-                response = self.protocol.parse_response(response_bytes)
-                if response.success:
-                    self.logger.debug(f"< {response.formatted_data}")
-                else:
-                    self.logger.error(f"Response error: {response.error_message}")
-                return response.formatted_data
+            if response:
+                # Format response based on gauge type
+                formatted_response = (
+                    response.decode('ascii', errors='ignore')
+                    if self.output_format == "ASCII"
+                    else self.format_response(response)
+                )
+
+                self.logger.debug(f"Received response: {formatted_response}")
+                return formatted_response
             else:
                 return "No response"
 
@@ -270,18 +231,17 @@ class GaugeCommunicator:
             self.logger.error(f"Command failed: {str(e)}")
             return f"Error: {str(e)}"
 
-
     def read_response(self) -> Optional[bytes]:
         """Read response from serial port with proper timeout handling."""
         if not self.ser:
             return None
 
         try:
-            response = b''
             start_time = time.time()
+            response = b''
 
             # Wait for initial data
-            while (time.time() - start_time) < self.timeout:
+            while (time.time() - start_time) < self.ser.timeout:
                 if self.ser.in_waiting:
                     break
                 time.sleep(0.01)
@@ -289,39 +249,38 @@ class GaugeCommunicator:
             if not self.ser.in_waiting:
                 return None
 
-            # For PPG550, read until terminator or timeout
+            # For PPG550, read until timeout or terminator
             if self.gauge_type == "PPG550":
-                while (time.time() - start_time) < self.timeout:
+                while (time.time() - start_time) < self.ser.timeout:
                     if self.ser.in_waiting:
-                        chunk = self.ser.read(self.ser.in_waiting)
-                        response += chunk
+                        byte = self.ser.read(1)
+                        # Skip any non-printable characters except newline and carriage return
+                        if byte[0] >= 32 or byte[0] in [10, 13]:
+                            response += byte
+                        # Check for terminator
+                        if response.endswith(b';FF'):
+                            return response
+                    else:
+                        if response:  # If we have some data but no more is coming
+                            return response
+                        time.sleep(0.01)
+                return response if response else None
 
-                        # Check for termination sequences
-                        if b';FF' in response:
-                            break
+            # For other gauge types, use the original header-based reading
+            header = self.ser.read(4)
+            if len(header) < 4:
+                return None
 
-                    elif response:  # If we have data but nothing more is coming
-                        break
+            msg_length = header[3]
+            remaining_length = msg_length + 2  # Add 2 for CRC
+            remaining = self.ser.read(remaining_length)
 
-                    time.sleep(0.01)
-
-                return response
-
-            else:
-                # Original header-based reading for other gauges
-                header = self.ser.read(4)
-                if len(header) < 4:
-                    return None
-
-                msg_length = header[3]
-                remaining_length = msg_length + 2  # Add 2 for CRC
-                remaining = self.ser.read(remaining_length)
-
-                return header + remaining
+            return header + remaining
 
         except Exception as e:
             self.logger.error(f"Read failed: {str(e)}")
             return None
+
     def disconnect(self):
         """Safely disconnect from the gauge."""
         try:

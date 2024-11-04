@@ -41,9 +41,6 @@ class GaugeApp:
         # Initialize communicator as None
         self.communicator: Optional[GaugeCommunicator] = None
 
-        # Add RS mode variable
-        self.rs_mode = tk.StringVar(value="RS232")
-
         # Create GUI elements
         self.create_gui()
 
@@ -93,7 +90,6 @@ class GaugeApp:
             self.show_port_settings()
         else:
             self.log_message("Selected gauge type not found in GAUGE_PARAMETERS.")
-
     def create_gui(self):
         """Create all GUI elements."""
         # Connection Frame
@@ -114,7 +110,7 @@ class GaugeApp:
 
         # Gauge selection
         ttk.Label(conn_frame, text="Gauge:").pack(side=tk.LEFT, padx=5)
-        self.gauge_menu = ttk.OptionMenu(
+        self.gauge_menu = ttk.OptionMenu(  # Now assigned to self.gauge_menu
             conn_frame,
             self.selected_gauge,
             "PCG550",
@@ -155,31 +151,12 @@ class GaugeApp:
         )
         self.debug_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # Output frame
+        # Output frame - must be created last
         self.output_frame = OutputFrame(
             self.root,
             self.output_format
         )
         self.output_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
-
-    def update_rs_modes(self, *args):
-        """Update available RS modes when gauge type changes"""
-        gauge_type = self.selected_gauge.get()
-        if gauge_type in GAUGE_PARAMETERS:
-            rs_modes = GAUGE_PARAMETERS[gauge_type].get("rs_modes", ["RS232"])
-
-            # Update menu
-            menu = self.rs_mode_menu["menu"]
-            menu.delete(0, "end")
-            for mode in rs_modes:
-                menu.add_command(
-                    label=mode,
-                    command=lambda m=mode: self.rs_mode.set(m)
-                )
-
-            # Set to first available mode
-            if rs_modes:
-                self.rs_mode.set(rs_modes[0])
 
     def refresh_ports(self):
         """Refresh available COM ports"""
@@ -198,34 +175,18 @@ class GaugeApp:
         """Handle connect/disconnect button."""
         if self.communicator is None:
             try:
-                # Create new communicator
                 self.communicator = GaugeCommunicator(
                     port=self.selected_port.get(),
                     gauge_type=self.selected_gauge.get(),
                     logger=self
                 )
 
-                # Apply all current settings before connecting
-                settings = {
-                    'baudrate': self.current_serial_settings['baudrate'],
-                    'bytesize': self.current_serial_settings['bytesize'],
-                    'parity': self.current_serial_settings['parity'],
-                    'stopbits': self.current_serial_settings['stopbits'],
-                    'rs485_enabled': self.current_serial_settings.get('rs485_enabled', False),
-                    'rs485_address': self.current_serial_settings.get('rs485_address', 254)
-                }
-
-                # Apply settings to communicator
+                # Apply current settings before connecting
                 if self.communicator.ser:
-                    self.communicator.ser.baudrate = settings['baudrate']
-                    self.communicator.ser.bytesize = settings['bytesize']
-                    self.communicator.ser.parity = settings['parity']
-                    self.communicator.ser.stopbits = settings['stopbits']
-
-                    # Apply RS485 settings
-                    if settings.get('rs485_enabled'):
-                        self.communicator.set_rs485_mode(True, settings['rs485_address'])
-                        self.log_message(f"Enabling RS485 mode with address {settings['rs485_address']}")
+                    self.communicator.ser.baudrate = self.current_serial_settings['baudrate']
+                    self.communicator.ser.bytesize = self.current_serial_settings['bytesize']
+                    self.communicator.ser.parity = self.current_serial_settings['parity']
+                    self.communicator.ser.stopbits = self.current_serial_settings['stopbits']
 
                 if self.communicator.connect():
                     self.connect_button.config(text="Disconnect")
@@ -236,11 +197,9 @@ class GaugeApp:
                     # Disable gauge and COM port selection after successful connection
                     self.gauge_menu.configure(state="disabled")
                     self.port_menu.configure(state="disabled")
-                    self.serial_frame.disable_settings()  # Add this method to SerialSettingsFrame
                 else:
                     self.communicator = None
                     self.log_message("Connection failed")
-
             except Exception as e:
                 self.log_message(f"Connection error: {str(e)}")
                 self.communicator = None
@@ -256,7 +215,6 @@ class GaugeApp:
                 # Re-enable gauge and COM port selection on disconnect
                 self.gauge_menu.configure(state="normal")
                 self.port_menu.configure(state="normal")
-                self.serial_frame.enable_settings()  # Add this method to SerialSettingsFrame
             except Exception as e:
                 self.log_message(f"Disconnection error: {str(e)}")
 
@@ -268,7 +226,7 @@ class GaugeApp:
         self.log_message(f"Output format changed to: {new_format}")
 
     def apply_serial_settings(self, settings: dict):
-        """Apply new serial port settings."""
+        """Apply new serial port settings by reinitializing the communicator."""
         # Save the new settings
         self.current_serial_settings.update(settings)
 
@@ -284,10 +242,6 @@ class GaugeApp:
                     gauge_type=self.selected_gauge.get(),
                     logger=self
                 )
-
-                # Apply RS485 settings if enabled
-                if settings.get('rs485_enabled', False):
-                    self.communicator.set_rs485_mode(True, settings.get('rs485_address', 254))
 
                 # Apply current settings directly to the new communicator
                 if self.communicator.ser:
@@ -352,19 +306,9 @@ class GaugeApp:
             formatted_cmd = temp_communicator.format_command(cmd_bytes)
             self.log_message(f"> {formatted_cmd}")
 
-            # Handle RS485 if enabled
-            if hasattr(temp_communicator, 'rs485_mode') and temp_communicator.rs485_mode:
-                temp_ser.setRTS(True)  # Enable transmitter
-                time.sleep(0.002)  # 2ms delay before transmission
-
             # Send command
             temp_ser.write(cmd_bytes)
             temp_ser.flush()
-
-            # Handle RS485 receive mode
-            if hasattr(temp_communicator, 'rs485_mode') and temp_communicator.rs485_mode:
-                time.sleep(0.002)  # 2ms delay after transmission
-                temp_ser.setRTS(False)  # Switch to receive mode
 
             # Read response with a short delay
             time.sleep(0.1)
@@ -385,7 +329,6 @@ class GaugeApp:
             if temp_ser and (not self.communicator or temp_ser != self.communicator.ser):
                 temp_ser.close()
                 self.log_message("Temporary connection closed.")
-
     def send_command(self, command_name: str, command_type: str, parameters: Optional[Dict[str, Any]] = None):
         """Send command through communicator"""
         if not self.communicator:

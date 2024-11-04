@@ -33,15 +33,10 @@ GAUGE_PARAMETERS = {
     },
     "PPG550": {
         "baudrate": 9600,
-        "address": 254,  # Explicitly set default address
         "protocol": "ascii",
-        "rs_modes": ["RS232", "RS485"],  # Available communication modes
         "commands": {
             "pressure": {"cmd": "PR3", "type": "read"},
-            "temperature": {"cmd": "T", "type": "read"},
-            "serial_number": {"cmd": "SN", "type": "read"},
-            "product_name": {"cmd": "PRD", "type": "read"},
-            "software_version": {"cmd": "SWV", "type": "read"}
+            "temperature": {"cmd": "T", "type": "read"}
         }
     },
     "MAG500": {

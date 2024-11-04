@@ -36,11 +36,8 @@ class PPG550Protocol(GaugeProtocol):
     def parse_response(self, response: bytes) -> GaugeResponse:
         """Parse response and handle different formats."""
         try:
-            # Filter out non-printable characters except newline and carriage return
-            printable_response = bytes(b for b in response if b >= 32 or b in [10, 13])
-
             # Remove @ACK and ;FF from response
-            decoded = printable_response.decode('ascii', errors='ignore').strip()
+            decoded = response.decode('ascii').strip()
             if decoded.startswith('@ACK'):
                 decoded = decoded[4:]
             if decoded.endswith(';FF'):
@@ -48,7 +45,7 @@ class PPG550Protocol(GaugeProtocol):
 
             return GaugeResponse(
                 raw_data=response,
-                formatted_data=decoded.strip(),
+                formatted_data=decoded,
                 success=True
             )
         except Exception as e:
@@ -499,7 +496,7 @@ class ASCIIProtocol(GaugeProtocol):
 
     def parse_response(self, response: bytes) -> GaugeResponse:
         try:
-            decoded = response.decode('ascii').strip()
+            decoded = response.decode('utf-8', errors='replace').strip()
             return GaugeResponse(
                 raw_data=response,
                 formatted_data=decoded,
