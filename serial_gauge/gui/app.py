@@ -1,3 +1,5 @@
+import queue
+import threading
 import tkinter as tk
 from tkinter import ttk
 import serial
@@ -53,7 +55,7 @@ class GaugeApp:
         self.selected_gauge.trace('w', self.on_gauge_change)
 
     def on_gauge_change(self, *args):
-        """Handle gauge type change"""
+        """Handle gauge type change with RS485 support"""
         gauge_type = self.selected_gauge.get()
 
         if gauge_type in GAUGE_PARAMETERS:
@@ -63,18 +65,26 @@ class GaugeApp:
             # Update serial settings in UI
             self.serial_frame.baud_var.set(str(params["baudrate"]))
 
+            # Set RS485 mode and address based on gauge type
+            rs485_mode = gauge_type == "PPG550"
+            rs485_address = params.get("address", 254) if rs485_mode else 254
+            self.serial_frame.set_rs485_mode(rs485_mode, rs485_address)
+
             # Apply the new settings
             self.apply_serial_settings({
                 'baudrate': params["baudrate"],
                 'bytesize': 8,
                 'parity': 'N',
-                'stopbits': 1.0
+                'stopbits': 1.0,
+                'rs485_mode': rs485_mode,
+                'rs485_address': rs485_address
             })
 
             # Update GUI and log the change
             self.log_message(f"\nChanged to {gauge_type}")
             self.log_message("Updated serial settings to match gauge defaults:")
             self.log_message(f"Baudrate: {params['baudrate']}")
+            self.log_message(f"RS485 Mode: {'Enabled' if rs485_mode else 'Disabled'}")
 
             # Log the appropriate identifier based on gauge type
             if gauge_type == "PPG550":
@@ -90,11 +100,91 @@ class GaugeApp:
             self.show_port_settings()
         else:
             self.log_message("Selected gauge type not found in GAUGE_PARAMETERS.")
+        self.update_continuous_visibility()
+
+    def toggle_continuous_reading(self):
+        """Handle continuous reading checkbox changes"""
+        if not hasattr(self, 'communicator') or not self.communicator:
+            self.continuous_var.set(False)
+            return
+
+        if self.continuous_var.get():
+            self.start_continuous_reading()
+        else:
+            self.stop_continuous_reading()
+
+    def start_continuous_reading(self):
+        """Start continuous reading in a separate thread"""
+        if self.continuous_thread and self.continuous_thread.is_alive():
+            return
+
+        self.communicator.set_continuous_reading(True)
+        self.continuous_thread = threading.Thread(
+            target=self.continuous_reading_thread,
+            daemon=True
+        )
+        self.continuous_thread.start()
+
+    def stop_continuous_reading(self):
+        """Stop continuous reading"""
+        if self.communicator:
+            self.communicator.stop_continuous_reading()
+        if self.continuous_thread:
+            self.continuous_thread.join(timeout=1.0)
+            self.continuous_thread = None
+
+    def continuous_reading_thread(self):
+        """Thread function for continuous reading"""
+        try:
+            interval = int(self.update_interval.get()) / 1000.0  # Convert to seconds
+
+            def callback(response):
+                self.response_queue.put(response)
+
+            self.communicator.read_continuous(callback)
+
+        except Exception as e:
+            self.response_queue.put(GaugeResponse(
+                raw_data=b"",
+                formatted_data="",
+                success=False,
+                error_message=f"Thread error: {str(e)}"
+            ))
+
     def create_gui(self):
         """Create all GUI elements."""
+        # Initialize continuous reading variables
+        self.continuous_var = tk.BooleanVar(value=False)
+        self.continuous_thread = None
+        self.response_queue = queue.Queue()
+        self.update_interval = tk.StringVar(value="100")  # 100ms default
+
         # Connection Frame
         conn_frame = ttk.LabelFrame(self.root, text="Connection")
         conn_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Add Continuous Reading frame - add this before the command interface
+        self.continuous_frame = ttk.LabelFrame(self.root, text="Continuous Reading")
+        # Initially hidden, shown only for CDG gauges
+
+        # Continuous reading controls
+        ttk.Checkbutton(
+            self.continuous_frame,
+            text="View Continuous Reading",
+            variable=self.continuous_var,
+            command=self.toggle_continuous_reading
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Label(
+            self.continuous_frame,
+            text="Update Interval (ms):"
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Entry(
+            self.continuous_frame,
+            textvariable=self.update_interval,
+            width=6
+        ).pack(side=tk.LEFT, padx=5)
 
         # Port selection
         ttk.Label(conn_frame, text="Port:").pack(side=tk.LEFT, padx=5)
@@ -158,6 +248,28 @@ class GaugeApp:
         )
         self.output_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
+    def update_gui(self):
+        """Regular GUI update function"""
+        # Process any responses in the queue
+        while not self.response_queue.empty():
+            try:
+                response = self.response_queue.get_nowait()
+                if response.success:
+                    self.output_text.insert("end", f"\n{response.formatted_data}")
+                    self.output_text.see("end")
+                else:
+                    self.output_text.insert("end", f"\nError: {response.error_message}")
+                    self.output_text.see("end")
+            except:
+                pass
+
+        # Schedule next update
+        self.root.after(50, self.update_gui)
+
+    def clear_output(self):
+        """Clear the output text area"""
+        self.output_text.delete(1.0, "end")
+
     def refresh_ports(self):
         """Refresh available COM ports"""
         ports = [port.device for port in serial.tools.list_ports.comports()]
@@ -173,50 +285,94 @@ class GaugeApp:
 
     def connect_disconnect(self):
         """Handle connect/disconnect button."""
-        if self.communicator is None:
+        if self.communicator is None:  # If not connected, try to connect
             try:
+                # Create communicator with basic settings
                 self.communicator = GaugeCommunicator(
                     port=self.selected_port.get(),
                     gauge_type=self.selected_gauge.get(),
                     logger=self
                 )
 
-                # Apply current settings before connecting
+                # Apply all current settings
                 if self.communicator.ser:
+                    # Basic serial settings
                     self.communicator.ser.baudrate = self.current_serial_settings['baudrate']
                     self.communicator.ser.bytesize = self.current_serial_settings['bytesize']
                     self.communicator.ser.parity = self.current_serial_settings['parity']
                     self.communicator.ser.stopbits = self.current_serial_settings['stopbits']
+                    self.communicator.ser.timeout = 1
+                    self.communicator.ser.write_timeout = 1
+
+                    # Handle RS485 mode
+                    if self.current_serial_settings.get('rs485_mode', False):
+                        self.communicator.set_rs_mode("RS485")
+                        # Update protocol address for PPG550
+                        if isinstance(self.communicator.protocol, PPG550Protocol):
+                            self.communicator.protocol.address = self.current_serial_settings.get('rs485_address', 254)
+                            self.log_message(f"RS485 mode enabled with address: {self.communicator.protocol.address}")
+                    else:
+                        self.communicator.set_rs_mode("RS232")
 
                 if self.communicator.connect():
-                    self.connect_button.config(text="Disconnect")
+                    self.connect_button.config(text="Disconnect")  # Change button text
                     self.log_message("Connected successfully")
                     self.cmd_frame.set_enabled(True)
                     self.debug_frame.set_enabled(True)
-
-                    # Disable gauge and COM port selection after successful connection
                     self.gauge_menu.configure(state="disabled")
                     self.port_menu.configure(state="disabled")
+                    # Update continuous reading visibility after successful connection
+                    self.update_continuous_visibility()
                 else:
                     self.communicator = None
+                    self.connect_button.config(text="Connect")  # Reset button text on failed connection
                     self.log_message("Connection failed")
+
             except Exception as e:
-                self.log_message(f"Connection error: {str(e)}")
                 self.communicator = None
-        else:
+                self.connect_button.config(text="Connect")  # Reset button text on error
+                self.log_message(f"Connection error: {str(e)}")
+        else:  # If connected, disconnect
             try:
+                # Stop continuous reading if active
+                if hasattr(self, 'continuous_var') and self.continuous_var.get():
+                    self.stop_continuous_reading()
+                    self.continuous_var.set(False)
+
                 self.communicator.disconnect()
                 self.communicator = None
-                self.connect_button.config(text="Connect")
+                self.connect_button.config(text="Connect")  # Change button text
                 self.log_message("Disconnected")
                 self.cmd_frame.set_enabled(False)
                 self.debug_frame.set_enabled(False)
-
-                # Re-enable gauge and COM port selection on disconnect
                 self.gauge_menu.configure(state="normal")
                 self.port_menu.configure(state="normal")
             except Exception as e:
                 self.log_message(f"Disconnection error: {str(e)}")
+                # Try to cleanup even if there was an error
+                self.communicator = None
+                self.connect_button.config(text="Connect")
+
+    def test_communication(self):
+        """Test communication after connection"""
+        try:
+            if isinstance(self.communicator.protocol, PPG550Protocol):
+                cmd = GaugeCommand("PR3", "?")  # Test with pressure reading
+            else:
+                cmd = GaugeCommand(
+                    name="product_name",
+                    command_type="?",
+                    parameters={"pid": 208, "cmd": 1}
+                )
+
+            response = self.communicator.send_command(cmd)
+            if response and response.success:
+                self.log_message(f"Communication test successful: {response.formatted_data}")
+            else:
+                self.log_message("Communication test failed")
+
+        except Exception as e:
+            self.log_message(f"Communication test error: {str(e)}")
 
     def on_output_format_change(self, *args):
         """Handle output format changes"""
@@ -226,35 +382,30 @@ class GaugeApp:
         self.log_message(f"Output format changed to: {new_format}")
 
     def apply_serial_settings(self, settings: dict):
-        """Apply new serial port settings by reinitializing the communicator."""
+        """Apply new serial port settings including RS485 mode."""
         # Save the new settings
         self.current_serial_settings.update(settings)
 
         if self.communicator:
             try:
-                # Disconnect and delete the old communicator instance
+                # Apply settings directly to communicator
                 if self.communicator.ser and self.communicator.ser.is_open:
-                    self.communicator.ser.close()
+                    self.communicator.ser.baudrate = settings['baudrate']
+                    self.communicator.ser.bytesize = settings['bytesize']
+                    self.communicator.ser.parity = settings['parity']
+                    self.communicator.ser.stopbits = settings['stopbits']
 
-                # Create a new communicator instance with updated settings
-                self.communicator = GaugeCommunicator(
-                    port=self.selected_port.get(),
-                    gauge_type=self.selected_gauge.get(),
-                    logger=self
-                )
+                    # Handle RS485 mode
+                    if settings.get('rs485_mode', False):
+                        self.communicator.set_rs_mode("RS485")
+                        if isinstance(self.communicator.protocol, PPG550Protocol):
+                            self.communicator.protocol.address = settings.get('rs485_address', 254)
+                    else:
+                        self.communicator.set_rs_mode("RS232")
 
-                # Apply current settings directly to the new communicator
-                if self.communicator.ser:
-                    self.communicator.ser.baudrate = self.current_serial_settings['baudrate']
-                    self.communicator.ser.bytesize = self.current_serial_settings['bytesize']
-                    self.communicator.ser.parity = self.current_serial_settings['parity']
-                    self.communicator.ser.stopbits = self.current_serial_settings['stopbits']
-
-                # Reopen the connection
-                if self.communicator.connect():
-                    self.log_message(f"Serial settings updated and connection reestablished: {settings}")
-                else:
-                    self.log_message("Failed to reconnect with new settings")
+                self.log_message(f"Serial settings updated: {settings}")
+                if settings.get('rs485_mode', False):
+                    self.log_message(f"RS485 Address: {settings.get('rs485_address', 254)}")
 
             except Exception as e:
                 self.log_message(f"Failed to update serial settings: {str(e)}")
@@ -424,6 +575,16 @@ class GaugeApp:
 
         self.log_message("\nFailed to connect at any baud rate")
         return False
+
+    def update_continuous_visibility(self):
+        """Show/hide continuous reading controls based on gauge type"""
+        if hasattr(self, 'communicator') and self.communicator:
+            if self.communicator.continuous_output:
+                self.continuous_frame.pack(fill="x", padx=5, pady=5)
+            else:
+                self.continuous_frame.pack_forget()
+                self.continuous_var.set(False)
+
     def send_enq(self):
         """Send ENQ character for testing"""
         port = self.selected_port.get()
@@ -541,6 +702,7 @@ class GaugeApp:
 
     def on_closing(self):
         """Handle application shutdown"""
+        self.stop_continuous_reading()
         if self.communicator:
             self.communicator.disconnect()
         self.root.destroy()

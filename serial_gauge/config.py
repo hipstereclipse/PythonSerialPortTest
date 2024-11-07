@@ -1,6 +1,8 @@
 import logging
 from typing import Dict, Any
 
+import serial
+
 # Configuration constants
 GAUGE_PARAMETERS = {
     "PCG550": {
@@ -71,6 +73,24 @@ GAUGE_PARAMETERS = {
             "pirani_full_scale": {"pid": 33000, "cmd": 1, "desc": "Read Pirani full scale"},
             "pirani_adjust": {"pid": 418, "cmd": 3, "desc": "Execute Pirani adjustment"}
         }
+    },
+    "CDG045D": {
+        "baudrate": 9600,
+        "bytesize": serial.EIGHTBITS,
+        "parity": serial.PARITY_NONE,
+        "stopbits": serial.STOPBITS_ONE,
+        "device_id": 0x00,  # Not used for CDG protocol
+        "commands": {
+            "pressure": {"cmd": "read", "name": "pressure", "desc": "Read pressure"},
+            "temperature": {"cmd": "read", "name": "temperature", "desc": "Read temperature status"},
+            "software_version": {"cmd": "read", "name": "software_version", "desc": "Read software version"},
+            "zero_adjust": {"cmd": "special", "name": "zero_adjust", "desc": "Perform zero adjustment"},
+            "reset": {"cmd": "special", "name": "reset", "desc": "Reset gauge"},
+            "unit": {"cmd": "read", "name": "unit", "desc": "Read pressure unit"},
+        },
+        "rs_modes": ["RS232"],  # CDG only supports RS232
+        "timeout": 1,  # 1 second timeout
+        "write_timeout": 1
     }
 
 }

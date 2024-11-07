@@ -266,10 +266,20 @@ class CommandFrame(ttk.LabelFrame):
 
 
 class SerialSettingsFrame(ttk.LabelFrame):
-    """Frame for RS232 settings and manual command entry"""
+    """Frame for RS232/RS485 settings and manual command entry"""
 
-    def __init__(self, parent: tk.Widget, settings_callback: Callable, command_callback: Callable):
+    def __init__(self, parent, settings_callback, command_callback):
+        """Initialize the frame
+
+        Args:
+            parent: Parent widget
+            settings_callback: Callback for when settings are changed
+            command_callback: Callback for when commands are sent
+        """
+        # Initialize parent LabelFrame
         super().__init__(parent, text="Serial Settings & Manual Command")
+
+        # Store callbacks
         self.settings_callback = settings_callback
         self.command_callback = command_callback
 
@@ -278,7 +288,14 @@ class SerialSettingsFrame(ttk.LabelFrame):
         self.bytesize_var = tk.StringVar(value="8")
         self.parity_var = tk.StringVar(value="N")
         self.stopbits_var = tk.StringVar(value="1")
+        self.rs485_mode = tk.BooleanVar(value=False)
+        self.rs485_addr = tk.StringVar(value="254")  # Default address
 
+        # Command history
+        self.cmd_history = []
+        self.history_index = -1
+
+        # Create widgets after initializing parent
         self.create_widgets()
 
     def create_widgets(self):
@@ -286,96 +303,148 @@ class SerialSettingsFrame(ttk.LabelFrame):
         settings_frame = ttk.Frame(self)
         settings_frame.pack(fill=tk.X, padx=5, pady=5)
 
+        # Left side settings (baud rate, byte size)
+        left_frame = ttk.Frame(settings_frame)
+        left_frame.pack(side=tk.LEFT, padx=5)
+
         # Baud Rate
-        ttk.Label(settings_frame, text="Baud Rate:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(left_frame, text="Baud:").pack(side=tk.LEFT, padx=2)
         baud_menu = ttk.Combobox(
-            settings_frame,
+            left_frame,
             textvariable=self.baud_var,
             values=["1200", "2400", "4800", "9600", "19200", "38400", "57600", "115200"],
-            width=8
+            width=7
         )
-        baud_menu.pack(side=tk.LEFT, padx=5)
+        baud_menu.pack(side=tk.LEFT, padx=2)
 
         # Byte Size
-        ttk.Label(settings_frame, text="Byte Size:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(left_frame, text="Bits:").pack(side=tk.LEFT, padx=2)
         bytesize_menu = ttk.Combobox(
-            settings_frame,
+            left_frame,
             textvariable=self.bytesize_var,
             values=["5", "6", "7", "8"],
-            width=3
+            width=2
         )
-        bytesize_menu.pack(side=tk.LEFT, padx=5)
+        bytesize_menu.pack(side=tk.LEFT, padx=2)
+
+        # Center settings (parity, stop bits)
+        center_frame = ttk.Frame(settings_frame)
+        center_frame.pack(side=tk.LEFT, padx=5)
 
         # Parity
-        ttk.Label(settings_frame, text="Parity:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(center_frame, text="Parity:").pack(side=tk.LEFT, padx=2)
         parity_menu = ttk.Combobox(
-            settings_frame,
+            center_frame,
             textvariable=self.parity_var,
             values=["N", "E", "O", "M", "S"],
-            width=3
+            width=2
         )
-        parity_menu.pack(side=tk.LEFT, padx=5)
+        parity_menu.pack(side=tk.LEFT, padx=2)
 
         # Stop Bits
-        ttk.Label(settings_frame, text="Stop Bits:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(center_frame, text="Stop:").pack(side=tk.LEFT, padx=2)
         stopbits_menu = ttk.Combobox(
-            settings_frame,
+            center_frame,
             textvariable=self.stopbits_var,
             values=["1", "1.5", "2"],
             width=3
         )
-        stopbits_menu.pack(side=tk.LEFT, padx=5)
+        stopbits_menu.pack(side=tk.LEFT, padx=2)
 
-        # Apply Settings Button
+        # Right side - RS485 settings
+        right_frame = ttk.Frame(settings_frame)
+        right_frame.pack(side=tk.LEFT, padx=5)
+
+        # RS485 Mode and Address
+        rs485_frame = ttk.Frame(right_frame)
+        rs485_frame.pack(side=tk.LEFT, padx=2)
+
+        self.rs485_check = ttk.Checkbutton(
+            rs485_frame,
+            text="RS485",
+            variable=self.rs485_mode,
+            command=self.on_rs485_change
+        )
+        self.rs485_check.pack(side=tk.LEFT, padx=2)
+
+        ttk.Label(rs485_frame, text="Addr:").pack(side=tk.LEFT, padx=2)
+        self.rs485_addr_entry = ttk.Entry(
+            rs485_frame,
+            textvariable=self.rs485_addr,
+            width=4
+        )
+        self.rs485_addr_entry.pack(side=tk.LEFT, padx=2)
+
+        # Apply Button
         ttk.Button(
-            settings_frame,
-            text="Apply Settings",
-            command=self.apply_settings
-        ).pack(side=tk.LEFT, padx=20)
+            right_frame,
+            text="Apply",
+            command=self.apply_settings,
+            width=8
+        ).pack(side=tk.LEFT, padx=5)
 
         # Manual Command Frame
         cmd_frame = ttk.Frame(self)
         cmd_frame.pack(fill=tk.X, padx=5, pady=5)
 
         # Command Entry
-        ttk.Label(cmd_frame, text="Manual Command:").pack(side=tk.LEFT, padx=5)
+        ttk.Label(cmd_frame, text="Command:").pack(side=tk.LEFT, padx=2)
         self.cmd_entry = ttk.Entry(cmd_frame, width=50)
-        self.cmd_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
-
-        # Add command history
-        self.cmd_history = []
-        self.history_index = -1
-        self.cmd_entry.bind('<Return>', self.send_command)
-        self.cmd_entry.bind('<Up>', self.history_up)
-        self.cmd_entry.bind('<Down>', self.history_down)
+        self.cmd_entry.pack(side=tk.LEFT, padx=2, fill=tk.X, expand=True)
 
         # Send Button
         ttk.Button(
             cmd_frame,
             text="Send",
-            command=lambda: self.send_command(None)
+            command=lambda: self.send_command(None),
+            width=8
         ).pack(side=tk.LEFT, padx=5)
 
-    def apply_settings(self):
-        """Apply serial settings"""
-        settings = {
+        # Bind key events for command history
+        self.cmd_entry.bind('<Return>', self.send_command)
+        self.cmd_entry.bind('<Up>', self.history_up)
+        self.cmd_entry.bind('<Down>', self.history_down)
+
+        # Initial RS485 address state
+        self.update_rs485_address_state()
+
+    def update_rs485_address_state(self):
+        """Update RS485 address entry state based on mode"""
+        state = 'normal' if self.rs485_mode.get() else 'disabled'
+        self.rs485_addr_entry.configure(state=state)
+
+    def on_rs485_change(self):
+        """Handle RS485 mode changes"""
+        self.update_rs485_address_state()
+        settings = self.get_current_settings()
+        self.settings_callback(settings)
+    def get_current_settings(self) -> dict:
+        """Get all current serial settings including RS485 mode and address"""
+        return {
             'baudrate': int(self.baud_var.get()),
             'bytesize': int(self.bytesize_var.get()),
             'parity': self.parity_var.get(),
-            'stopbits': float(self.stopbits_var.get())
+            'stopbits': float(self.stopbits_var.get()),
+            'rs485_mode': self.rs485_mode.get(),
+            'rs485_address': int(self.rs485_addr.get())
         }
+    def apply_settings(self):
+        """Apply all serial settings"""
+        settings = self.get_current_settings()
         self.settings_callback(settings)
 
     def send_command(self, event):
-        """Send manual command"""
+        """Send manual command with history support"""
         cmd = self.cmd_entry.get().strip()
         if cmd:
             # Add to history if not duplicate of last command
             if not self.cmd_history or cmd != self.cmd_history[-1]:
                 self.cmd_history.append(cmd)
             self.history_index = len(self.cmd_history)
+
             # Send command
             self.command_callback(cmd)
+
             # Clear entry
             self.cmd_entry.delete(0, tk.END)
         return 'break'  # Prevent default handling
@@ -398,6 +467,14 @@ class SerialSettingsFrame(ttk.LabelFrame):
             self.history_index = len(self.cmd_history)
             self.cmd_entry.delete(0, tk.END)
         return 'break'
+
+    def set_rs485_mode(self, enabled: bool, address: int = 254):
+        """Enable or disable RS485 mode with optional address"""
+        self.rs485_mode.set(enabled)
+        self.rs485_addr.set(str(address))
+        self.update_rs485_address_state()
+        self.on_rs485_change()
+
 
 
 class DebugFrame(ttk.LabelFrame):
