@@ -109,7 +109,7 @@ class CDGProtocol(GaugeProtocol):
                     raw_data=response,
                     formatted_data="",
                     success=False,
-                    error_message="Invalid data string length"
+                    error_message="Invalid start byte"
                 )
 
             # Extract fields
@@ -136,35 +136,25 @@ class CDGProtocol(GaugeProtocol):
             pressure_unit = (status >> 4) & 0x03
             unit_str = {0: "mbar", 1: "Torr", 2: "Pa"}.get(pressure_unit, "unknown")
 
-            # Calculate pressure based on sensor type
-            fsr_exp = sensor_type & 0x0F
-            fsr_mantissa = (sensor_type >> 4) & 0x0F
-
-            # Get mantissa value
-            mantissa_values = {0: 1.0, 1: 1.1, 2: 2.0, 3: 2.5, 4: 5.0}
-            fsr_mantissa_val = mantissa_values.get(fsr_mantissa, 1.0)
-
-            # Get conversion factor based on units
-            conv_factor = {"mbar": 1.3332, "Torr": 1.0000, "Pa": 133.32}[unit_str]
-
-            # Combine pressure bytes and calculate actual pressure
+            # Calculate pressure value
             pressure_value = (pressure_high << 8) | pressure_low
             if pressure_value & 0x8000:  # Handle negative values
                 pressure_value = -((~pressure_value + 1) & 0xFFFF)
 
-            pressure = (pressure_value * conv_factor * fsr_mantissa_val * (10 ** fsr_exp)) / 24000
+            # Format pressure in scientific notation with 2 decimal places
+            pressure = pressure_value / 16384.0  # Scale factor for CDG
+            formatted_pressure = f"{pressure:.2e} {unit_str}"
 
-            # Format response
+            # Format full response
             formatted_data = {
-                "pressure": f"{pressure:.2e} {unit_str}",
+                "pressure": formatted_pressure,
                 "status": {
                     "unit": unit_str,
                     "heating": bool(status & 0x80),
-                    "temp_ok": bool(status & 0x80),  # For heated gauges
-                    "toggle": bool(status & 0x08)
+                    "temp_ok": bool(status & 0x40),
+                    "emission": bool(status & 0x20)
                 },
-                "errors": self._parse_error_byte(error),
-                "sensor_range": f"{fsr_mantissa_val}E{fsr_exp} {unit_str}"
+                "errors": self._parse_error_byte(error)
             }
 
             return GaugeResponse(

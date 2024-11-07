@@ -226,40 +226,6 @@ class IntelligentCommandSender:
 
 class GaugeCommunicator:
     def __init__(self, port: str, gauge_type: str, logger: Optional[logging.Logger] = None):
-        # ... [Keep existing initialization code] ...
-        self.manual_sender = IntelligentCommandSender()
-
-    # ... [Keep all existing methods] ...
-
-    def send_manual_command(self, command_string: str, force_format: str = None) -> Dict[str, Any]:
-        """
-        Send a manual command string to the gauge.
-
-        Args:
-            command_string: Command in any supported format (hex, binary, decimal, ASCII)
-            force_format: Optional format to force for the response
-
-        Returns:
-            Dictionary containing command details and response
-        """
-        return self.manual_sender.send_manual_command(self, command_string, force_format)
-
-    def get_supported_formats(self) -> Dict[str, str]:
-        """
-        Get information about supported command formats
-        """
-        return {
-            "hex": "Space-separated hex (e.g., '03 00 02')",
-            "hex_prefixed": "Hex with 0x prefix (e.g., '0x03 0x00')",
-            "hex_escaped": "Hex with \\x escape (e.g., '\\x03\\x00')",
-            "decimal": "Space-separated decimal (e.g., '3 0 2')",
-            "decimal_csv": "Comma-separated decimal (e.g., '3,0,2')",
-            "binary": "Binary string (e.g., '0000 0011')",
-            "ascii": "ASCII text (e.g., 'ABC')"
-        }
-
-class GaugeCommunicator:
-    def __init__(self, port: str, gauge_type: str, logger: Optional[logging.Logger] = None):
         self.port = port
         self.gauge_type = gauge_type
         self.logger = logger or logging.getLogger(__name__)
@@ -270,7 +236,10 @@ class GaugeCommunicator:
         self.protocol = get_protocol(gauge_type, params)
         self.baudrate = params["baudrate"]
         self.commands = params["commands"]
-        self.output_format = "ASCII"
+
+        # Set initial output format based on gauge type
+        self.output_format = GAUGE_OUTPUT_FORMATS.get(gauge_type, "ASCII")
+        self.logger.debug(f"Setting initial output format to {self.output_format} for gauge type {gauge_type}")
 
         # RS232/RS485 configuration
         self.rs_modes = params.get("rs_modes", ["RS232"])
@@ -324,35 +293,57 @@ class GaugeCommunicator:
         """Signal to stop continuous reading"""
         self._stop_continuous = True
 
-    def read_continuous(self, callback) -> None:
+    def read_continuous(self, callback, update_interval) -> None:
         """
-        Continuously read gauge responses and pass them to callback function.
+        Continuously read gauge responses and pass them to the callback function,
+        respecting the update interval set in the GUI.
 
         Args:
-            callback: Function that takes a GaugeResponse object as parameter
+            callback: Function that takes a GaugeResponse object as a parameter.
         """
         self._stop_continuous = False
         self.logger.info("Starting continuous reading")
 
-        try:
-            while not self._stop_continuous and self.ser and self.ser.is_open:
-                response = self.read_response()
+        expected_frame_size = 9  # Adjust as per your protocol
+        previous_response = None  # To track the last response
+
+
+        while not self._stop_continuous and self.ser and self.ser.is_open:
+            try:
+                response = self.ser.read(expected_frame_size)
                 if response:
-                    gauge_response = self.protocol.parse_response(response)
-                    if gauge_response.success:
-                        callback(gauge_response)
-                time.sleep(0.020)  # Match CDG output rate
+                    if response != previous_response:
+                        self.logger.debug(f"New raw response received: {response.hex()}")
+                        previous_response = response
 
-        except Exception as e:
-            self.logger.error(f"Continuous reading error: {str(e)}")
-            callback(GaugeResponse(
-                raw_data=b"",
-                formatted_data="",
-                success=False,
-                error_message=f"Continuous reading error: {str(e)}"
-            ))
+                        # Parse and process the response
+                        gauge_response = self.protocol.parse_response(response)
+                        if gauge_response.success:
+                            callback(gauge_response)
+                        else:
+                            self.logger.warning("Failed to parse response")
+                            callback(GaugeResponse(
+                                raw_data=response,
+                                formatted_data="",
+                                success=False,
+                                error_message="Parsing failed"
+                            ))
+                    else:
+                        self.logger.debug("Duplicate response ignored")
 
-        self.logger.info("Stopped continuous reading")
+                # Respect the update interval
+                time.sleep(update_interval)
+
+            except Exception as e:
+                self.logger.error(f"Error reading from serial: {str(e)}")
+                callback(GaugeResponse(
+                    raw_data=b"",
+                    formatted_data="",
+                    success=False,
+                    error_message=f"Error reading from serial: {str(e)}"
+                ))
+
+
 
     def set_rs_mode(self, mode: str):
         """Set RS232 or RS485 mode with validation"""
@@ -398,9 +389,17 @@ class GaugeCommunicator:
         self.logger.debug(f"RS485 mode: {'enabled' if enabled else 'disabled'}")
 
     def set_output_format(self, format_type: str):
-        """Set the output format type and update protocol if needed"""
+        """Set the output format type with validation"""
+        if format_type not in OUTPUT_FORMATS:
+            self.logger.error(f"Invalid output format: {format_type}")
+            return
+
+        old_format = self.output_format
         self.output_format = format_type
-        self.logger.debug(f"Output format set to: {format_type}")
+
+        if old_format != format_type:
+            self.logger.debug(f"Output format changed from {old_format} to {format_type}")
+
 
     def format_command(self, command_bytes: bytes) -> str:
         """Format command according to selected output format"""
@@ -540,6 +539,33 @@ class GaugeCommunicator:
                 error_message=str(e)
             )
 
+    def send_manual_command(self, command_string: str, force_format: str = None) -> Dict[str, Any]:
+        """
+        Send a manual command string to the gauge.
+
+        Args:
+            command_string: Command in any supported format (hex, binary, decimal, ASCII)
+            force_format: Optional format to force for the response
+
+        Returns:
+            Dictionary containing command details and response
+        """
+        return self.manual_sender.send_manual_command(self, command_string, force_format)
+
+    def get_supported_formats(self) -> Dict[str, str]:
+        """
+        Get information about supported command formats
+        """
+        return {
+            "hex": "Space-separated hex (e.g., '03 00 02')",
+            "hex_prefixed": "Hex with 0x prefix (e.g., '0x03 0x00')",
+            "hex_escaped": "Hex with \\x escape (e.g., '\\x03\\x00')",
+            "decimal": "Space-separated decimal (e.g., '3 0 2')",
+            "decimal_csv": "Comma-separated decimal (e.g., '3,0,2')",
+            "binary": "Binary string (e.g., '0000 0011')",
+            "ascii": "ASCII text (e.g., 'ABC')"
+        }
+
     def test_connection(self) -> bool:
         """Test connection with proper protocol handling"""
         if not self.ser or not self.ser.is_open:
@@ -635,6 +661,8 @@ class GaugeCommunicator:
 
             # For PPG550, read until terminator
             elif isinstance(self.protocol, PPG550Protocol):
+                response = bytearray()
+                start_time = time.time()
                 while (time.time() - start_time) < self.timeout:
                     if self.ser.in_waiting:
                         byte = self.ser.read(1)
@@ -684,6 +712,8 @@ class GaugeCommunicator:
             self.ser.bytesize = settings.get('bytesize', self.bytesize)
             self.ser.parity = settings.get('parity', self.parity)
             self.ser.stopbits = settings.get('stopbits', self.stopbits)
+
+
 
     def disconnect(self):
         """Safely disconnect from the gauge."""

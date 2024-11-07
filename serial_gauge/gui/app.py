@@ -9,7 +9,7 @@ import logging
 from datetime import datetime
 import time
 
-from ..config import GAUGE_PARAMETERS, OUTPUT_FORMATS, setup_logging
+from ..config import GAUGE_PARAMETERS, OUTPUT_FORMATS, setup_logging, GAUGE_OUTPUT_FORMATS
 from ..models import GaugeCommand
 from ..communicator import GaugeCommunicator
 from .widgets import (
@@ -29,7 +29,7 @@ class GaugeApp:
 
         # Initialize variables
         self.selected_port = tk.StringVar()
-        self.selected_gauge = tk.StringVar(value="PCG550")
+        self.selected_gauge = tk.StringVar(value="PPG550")
         self.output_format = tk.StringVar(value="ASCII")
 
         # Initialize default serial settings
@@ -70,6 +70,9 @@ class GaugeApp:
             rs485_address = params.get("address", 254) if rs485_mode else 254
             self.serial_frame.set_rs485_mode(rs485_mode, rs485_address)
 
+            # Set default output format for the selected gauge type
+            self.output_format.set(GAUGE_OUTPUT_FORMATS.get(gauge_type))
+
             # Apply the new settings
             self.apply_serial_settings({
                 'baudrate': params["baudrate"],
@@ -90,7 +93,7 @@ class GaugeApp:
             if gauge_type == "PPG550":
                 # Use 'address' for PPG550 instead of 'device_id'
                 self.log_message(f"Address: {params.get('address', 'N/A')}")
-            elif gauge_type in ["PCG550", "MAG500", "MPG500"]:
+            elif gauge_type in ["PCG550", "MAG500", "MPG500","CDG045D"]:
                 # Use 'device_id' for other gauges
                 self.log_message(f"Device ID: {params.get('device_id', 'N/A'):#x}")
             else:
@@ -136,12 +139,13 @@ class GaugeApp:
     def continuous_reading_thread(self):
         """Thread function for continuous reading"""
         try:
-            interval = int(self.update_interval.get()) / 1000.0  # Convert to seconds
-
             def callback(response):
                 self.response_queue.put(response)
-
-            self.communicator.read_continuous(callback)
+            try:
+                interval = int(self.update_interval.get()) / 1000.0  # Convert to seconds
+                self.communicator.read_continuous(callback, interval)  # Use the converted interval
+            except ValueError:
+                self.log_message("Invalid update interval value. Please enter a valid integer.")
 
         except Exception as e:
             self.response_queue.put(GaugeResponse(
@@ -184,6 +188,12 @@ class GaugeApp:
             self.continuous_frame,
             textvariable=self.update_interval,
             width=6
+        ).pack(side=tk.LEFT, padx=5)
+
+        ttk.Button(
+            self.continuous_frame,
+            text="Update",
+            command=self.update_interval_value
         ).pack(side=tk.LEFT, padx=5)
 
         # Port selection
@@ -266,6 +276,20 @@ class GaugeApp:
         # Schedule next update
         self.root.after(50, self.update_gui)
 
+    def update_interval_value(self):
+        """Update the interval value for continuous reading."""
+        try:
+            interval = int(self.update_interval.get())  # Ensure it's an integer
+            self.log_message(f"Update interval set to: {interval} ms")
+
+            # If continuous reading is active, stop it, update interval, and restart
+            if self.continuous_var.get():
+                self.stop_continuous_reading()  # Stop continuous reading
+                self.start_continuous_reading()  # Restart continuous reading
+
+        except ValueError:
+            self.log_message("Invalid interval value. Please enter a valid integer.")
+
     def clear_output(self):
         """Clear the output text area"""
         self.output_text.delete(1.0, "end")
@@ -293,6 +317,8 @@ class GaugeApp:
                     gauge_type=self.selected_gauge.get(),
                     logger=self
                 )
+
+                self.communicator.set_output_format(GAUGE_OUTPUT_FORMATS.get(self.selected_gauge.get()))
 
                 # Apply all current settings
                 if self.communicator.ser:

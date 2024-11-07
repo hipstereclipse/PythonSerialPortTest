@@ -3,6 +3,15 @@ from typing import Dict, Any
 
 import serial
 
+GAUGE_OUTPUT_FORMATS = {
+    "PCG550": "Hex",     # PCG550 uses binary protocol
+    "PSG550": "Hex",     # PSG550 uses binary protocol
+    "PPG550": "ASCII",   # PPG550 uses ASCII protocol
+    "MAG500": "Hex",     # MAG500 uses binary protocol
+    "MPG500": "Hex",     # MPG500 uses binary protocol
+    "CDG045D": "Hex"     # CDG045D uses binary protocol
+}
+
 # Configuration constants
 GAUGE_PARAMETERS = {
     "PCG550": {
