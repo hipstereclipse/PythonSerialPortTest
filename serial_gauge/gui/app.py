@@ -25,7 +25,7 @@ class GaugeApp:
         # Initialize main window settings
         self.root = root
         self.root.title("Gauge Communication Interface")
-        self.root.geometry("800x600")
+        self.root.geometry("800x650")
 
         # Initialize variables
         self.selected_port = tk.StringVar()
@@ -161,7 +161,7 @@ class GaugeApp:
         self.continuous_var = tk.BooleanVar(value=False)
         self.continuous_thread = None
         self.response_queue = queue.Queue()
-        self.update_interval = tk.StringVar(value="100")  # 100ms default
+        self.update_interval = tk.StringVar(value="1000")  # 100ms default
 
         # Connection Frame
         conn_frame = ttk.LabelFrame(self.root, text="Connection")
@@ -440,7 +440,15 @@ class GaugeApp:
             self.log_message(f"Settings saved for the next connection: {settings}")
 
     def send_manual_command(self, command: str):
-        """Send a manual command to the device."""
+        """Send a manual command to the device, pausing continuous output if active."""
+        was_continuous_active = False
+
+        # Pause continuous reading if it is active
+        if getattr(self, "_stop_continuous", None) is False:
+            was_continuous_active = True
+            self._stop_continuous = True
+            self.log_message("Pausing continuous output for manual command.")
+
         # If not connected, attempt to open a temporary connection
         if not self.communicator or not self.communicator.ser.is_open:
             try:
@@ -506,6 +514,12 @@ class GaugeApp:
             if temp_ser and (not self.communicator or temp_ser != self.communicator.ser):
                 temp_ser.close()
                 self.log_message("Temporary connection closed.")
+
+            # Resume continuous reading if it was paused
+            if was_continuous_active:
+                self._stop_continuous = False
+                self.log_message("Resuming continuous output.")
+
     def send_command(self, command_name: str, command_type: str, parameters: Optional[Dict[str, Any]] = None):
         """Send command through communicator"""
         if not self.communicator:

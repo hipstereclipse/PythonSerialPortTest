@@ -312,24 +312,28 @@ class GaugeCommunicator:
             try:
                 response = self.ser.read(expected_frame_size)
                 if response:
-                    if response != previous_response:
-                        self.logger.debug(f"New raw response received: {response.hex()}")
-                        previous_response = response
+                    # Determine best output format if not forced
+                    suggested_format = IntelligentCommandSender.format_output_suggestion(response)
 
-                        # Parse and process the response
-                        gauge_response = self.protocol.parse_response(response)
-                        if gauge_response.success:
-                            callback(gauge_response)
-                        else:
-                            self.logger.warning("Failed to parse response")
-                            callback(GaugeResponse(
-                                raw_data=response,
-                                formatted_data="",
-                                success=False,
-                                error_message="Parsing failed"
-                            ))
+                    # Format response
+                    formatted_response = self.format_response(response)
+                    self.logger.debug(f"New response received: {response}")
+
+                    # Parse and process the response
+                    gauge_response = self.protocol.parse_response(response)
+                    if gauge_response.success:
+                        callback(gauge_response)
                     else:
-                        self.logger.debug("Duplicate response ignored")
+                        self.logger.warning("Failed to parse response")
+                        callback(GaugeResponse(
+                            raw_data=response,
+                            formatted_data="",
+                            success=False,
+                            error_message="Parsing failed"
+                        ))
+
+                    #self.logger.debug(f"New raw response received: {response.hex()}")
+                    previous_response = response
 
                 # Respect the update interval
                 time.sleep(update_interval)
@@ -342,8 +346,6 @@ class GaugeCommunicator:
                     success=False,
                     error_message=f"Error reading from serial: {str(e)}"
                 ))
-
-
 
     def set_rs_mode(self, mode: str):
         """Set RS232 or RS485 mode with validation"""
