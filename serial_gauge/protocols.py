@@ -3,6 +3,8 @@ from typing import Optional, Dict, Any, List, Tuple
 import struct
 import math
 import binascii
+
+from .config import GAUGE_PARAMETERS
 from .models import GaugeCommand, GaugeResponse
 
 
@@ -193,6 +195,26 @@ class CDGProtocol(GaugeProtocol):
             bytearray([0x03, 0x00, 0x3B, 0x00, 0x3B])  # Checksum = 0x3B
         ]
         return [bytes(cmd) for cmd in commands]
+
+    def create_command_from_config(self, gauge_name: str, command_name: str) -> bytes:
+        """Create a command using the configuration settings for the given gauge."""
+        config = GAUGE_PARAMETERS.get(gauge_name, {})
+        command_details = config.get("commands", {}).get(command_name, {})
+        cmd_type = command_details.get("cmd")
+        cmd_name = command_details.get("name", "")
+
+        # Handle special or standard commands accordingly
+        if cmd_type == "special":
+            return self.create_quick_command(cmd_name)  # You can reuse your quick command logic here
+
+        # Adjust further for read/write types if needed
+        return self.create_command(GaugeCommand(
+            name=cmd_name,
+            command_type="read" if cmd_type == "read" else "write",
+            parameters={"value": 0}  # Adjust as needed based on your command logic
+        ))
+
+
 class PPG550Protocol(GaugeProtocol):
     """Protocol handler for PPG550 gauge - MKS ASCII protocol"""
 

@@ -1,4 +1,4 @@
-from .widgets import CommandFrame, DebugFrame, OutputFrame, SerialSettingsFrame
+from .gui import CommandFrame, DebugFrame, OutputFrame, SerialSettingsFrame
 from ..protocols import *
 from ..communicator import *
 
