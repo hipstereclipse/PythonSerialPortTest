@@ -293,6 +293,7 @@ class SerialSettingsFrame(ttk.LabelFrame):
         # Store callbacks for settings changes and command sending
         self.settings_callback = settings_callback
         self.command_callback = command_callback
+        self.logger = None  # Will be set by main application
 
         # Initialize serial settings variables with default values
         self.baud_var = tk.StringVar(value="9600")
@@ -308,6 +309,10 @@ class SerialSettingsFrame(ttk.LabelFrame):
 
         # Create and layout all widgets within the frame
         self._create_widgets()
+
+    def set_logger(self, logger):
+        """Set the logger instance to use for messages"""
+        self.logger = logger
 
     def _create_widgets(self):
         """
@@ -410,6 +415,7 @@ class SerialSettingsFrame(ttk.LabelFrame):
         # Initialize RS485 address entry state based on RS485 mode
         self._update_rs485_address_state()
 
+
     def _update_rs485_address_state(self):
         """
         Update the state (enabled/disabled) of the RS485 address entry field
@@ -450,6 +456,22 @@ class SerialSettingsFrame(ttk.LabelFrame):
         """
         settings = self.get_current_settings()
         self.settings_callback(settings)
+
+        # Create settings summary message
+        settings_msg = f"\nSerial settings applied:\n"
+        settings_msg += f"Baud Rate: {settings['baudrate']}\n"
+        settings_msg += f"Data Bits: {settings['bytesize']}\n"
+        settings_msg += f"Parity: {settings['parity']}\n"
+        settings_msg += f"Stop Bits: {settings['stopbits']}\n"
+        if settings['rs485_mode']:
+            settings_msg += f"RS485 Mode: Enabled\n"
+            settings_msg += f"RS485 Address: {settings['rs485_address']}\n"
+        else:
+            settings_msg += f"RS485 Mode: Disabled\n"
+
+        # Log the settings message if logger is available
+        if self.logger:
+            self.logger.info(settings_msg)
 
     def send_command(self, event=None):
         """
@@ -729,6 +751,7 @@ class GaugeApplication:
             self.apply_serial_settings,
             self.send_manual_command
         )
+        self.serial_frame.set_logger(self)  # Pass self as logger since GaugeApplication implements logger interface
         self.serial_frame.pack(fill=tk.X, padx=5, pady=5)
 
         # Command Frame
