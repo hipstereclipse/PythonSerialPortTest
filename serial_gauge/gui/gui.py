@@ -18,7 +18,7 @@ from typing import Optional, Dict, Any, Callable
 # Update imports to use correct package paths
 from ..config import GAUGE_PARAMETERS, OUTPUT_FORMATS, GAUGE_OUTPUT_FORMATS
 from ..communicator import IntelligentCommandSender, ResponseHandler, GaugeCommunicator, GaugeTester
-from ..models import GaugeCommand
+from ..models import GaugeCommand, GaugeResponse
 from ..protocols import *
 
 # ================================
@@ -105,7 +105,8 @@ class CommandFrame(ttk.LabelFrame):
         param_frame = ttk.Frame(quick_frame)
         param_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        ttk.Label(param_frame, text="Parameter:").pack(side=tk.LEFT, padx=5)
+        self.param_label = ttk.Label(param_frame, text="Parameter:")
+        self.param_label.pack(side=tk.LEFT, padx=5)
         self.param_entry = ttk.Entry(
             param_frame,
             textvariable=self.param_var,
@@ -141,17 +142,50 @@ class CommandFrame(ttk.LabelFrame):
             self.cmd_combo['values'] = cmd_list
             if cmd_list:
                 self.cmd_combo.set(cmd_list[0])
+                # Update command info for the first command
+                self._update_command_info()
 
     def _update_command_info(self, *args):
-        """Update command information when selected command changes"""
+        """Update command information and UI state when selected command changes"""
         selected = self.cmd_var.get()
         if selected:
             # Extract command name from selection (remove description)
             cmd_name = selected.split(" - ")[0]
             gauge_type = self.gauge_var.get()
+
             if gauge_type in GAUGE_PARAMETERS:
                 cmd_info = GAUGE_PARAMETERS[gauge_type]["commands"].get(cmd_name, {})
                 self.desc_var.set(cmd_info.get("desc", "No description available"))
+
+                # Determine if command is read-only or writable
+                cmd_type = cmd_info.get("cmd", "read")  # Default to read
+
+                # For CDG gauges
+                if gauge_type in ["CDG025D", "CDG045D"]:
+                    is_writable = cmd_info.get("cmd") in ["write", "special"]
+                # For other gauges
+                else:
+                    # Commands with cmd=1 are read-only, cmd=3 are writable
+                    is_writable = cmd_info.get("cmd") == 3
+
+                # Update UI state based on command type
+                if is_writable:
+                    # Enable both radio buttons and parameter entry
+                    self.query_radio.configure(state="normal")
+                    self.set_radio.configure(state="normal")
+                    self.param_entry.configure(state="normal")
+                    self.param_label.configure(state="normal")
+                else:
+                    # Force query mode and disable parameter entry for read-only commands
+                    self.cmd_type.set("?")
+                    self.query_radio.configure(state="normal")
+                    self.set_radio.configure(state="disabled")
+                    self.param_entry.configure(state="disabled")
+                    self.param_label.configure(state="disabled")
+                    self.param_var.set("")  # Clear parameter field
+
+                # Update parameter field state based on command type
+                self._update_parameter_state()
 
     def send_manual_command(self):
         """Send manual command entered by user"""
@@ -160,18 +194,14 @@ class CommandFrame(ttk.LabelFrame):
 
         cmd = self.manual_cmd_entry.get().strip()
         if cmd:
-            # Use IntelligentCommandSender for manual commands
             result = IntelligentCommandSender.send_manual_command(
                 self.communicator,
                 cmd
             )
 
-            # Clear the entry field
             self.manual_cmd_entry.delete(0, tk.END)
 
-            # Pass result back through callback for display
             if self.command_callback:
-                # Convert dictionary result to GaugeResponse
                 response = GaugeResponse(
                     raw_data=bytes.fromhex(result.get('response_raw', '')) if result.get('response_raw') else b'',
                     formatted_data=result.get('response_formatted', ''),
@@ -180,6 +210,16 @@ class CommandFrame(ttk.LabelFrame):
                 )
                 self.command_callback(cmd, response=response)
 
+    def _update_parameter_state(self, *args):
+        """Update parameter entry state based on command type selection"""
+        if self.cmd_type.get() == "!":
+            self.param_entry.configure(state="normal")
+            self.param_label.configure(state="normal")
+        else:
+            self.param_entry.configure(state="disabled")
+            self.param_label.configure(state="disabled")
+            self.param_var.set("")  # Clear parameter field
+
     def send_quick_command(self):
         """Send quick command based on selection"""
         if not self.communicator:
@@ -187,13 +227,12 @@ class CommandFrame(ttk.LabelFrame):
 
         selected = self.cmd_var.get()
         if selected:
-            # Extract command name from selection
             cmd_name = selected.split(" - ")[0]
             gauge_type = self.gauge_var.get()
+
             if gauge_type in GAUGE_PARAMETERS:
                 cmd_info = GAUGE_PARAMETERS[gauge_type]["commands"].get(cmd_name, {})
 
-                # Create gauge command
                 command = GaugeCommand(
                     name=cmd_name,
                     command_type=self.cmd_type.get(),
@@ -203,20 +242,32 @@ class CommandFrame(ttk.LabelFrame):
                     }
                 )
 
-                # Send command through communicator
                 response = self.communicator.send_command(command)
 
-                # Pass response back through callback for display
                 if self.command_callback:
                     self.command_callback(cmd_name, response=response)
 
     def set_enabled(self, enabled: bool):
         """Enable or disable all interactive widgets in the frame"""
         state = "normal" if enabled else "disabled"
-        for widget in [self.manual_cmd_entry, self.manual_send_button,
-                       self.cmd_combo, self.query_radio, self.set_radio,
-                       self.param_entry, self.quick_send_button]:
+
+        # Update all widget states
+        widgets = [
+            self.manual_cmd_entry,
+            self.manual_send_button,
+            self.cmd_combo,
+            self.query_radio,
+            self.set_radio,
+            self.param_entry,
+            self.quick_send_button
+        ]
+
+        for widget in widgets:
             widget.configure(state=state)
+
+        # If enabled, recheck the command state to properly set radio buttons
+        if enabled:
+            self._update_command_info()
 
 
 # ================================
@@ -477,23 +528,17 @@ class SerialSettingsFrame(ttk.LabelFrame):
 # Debug Frame: Provides Debugging Tools
 # ================================
 class DebugFrame(ttk.LabelFrame):
-    """
-    Frame for debugging options and testing gauge communication.
-    Includes buttons to test baud rates, send ENQ characters, and display port settings.
-    """
+    """Frame for debugging options and testing gauge communication."""
 
-    def __init__(self, parent, baud_callback: Callable, enq_callback: Callable,
-                 settings_callback: Callable):
+    def __init__(self, parent, baud_callback: Callable, enq_callback: Callable, settings_callback: Callable,
+                 output_format: tk.StringVar):
         """
         Initialize the DebugFrame with callbacks for debugging actions.
-
-        Args:
-            parent: The parent Tkinter widget.
-            baud_callback (Callable): Function to call when testing baud rates.
-            enq_callback (Callable): Function to call when sending an ENQ character.
-            settings_callback (Callable): Function to call to show port settings.
+        Added output_format parameter to respect selected format.
         """
         super().__init__(parent, text="Debug")
+
+        self.output_format = output_format  # Store reference to output format variable
 
         # Create and layout debug controls within the frame
         controls_frame = ttk.Frame(self)
@@ -527,12 +572,7 @@ class DebugFrame(ttk.LabelFrame):
         self.non_connection_buttons = [self.settings_button]
 
     def set_enabled(self, enabled: bool):
-        """
-        Enable or disable debug buttons that require an active connection.
-
-        Args:
-            enabled (bool): True to enable the buttons, False to disable.
-        """
+        """Enable or disable debug buttons that require an active connection."""
         state = "normal" if enabled else "disabled"
 
         # Iterate through child widgets and update their state accordingly
@@ -540,7 +580,6 @@ class DebugFrame(ttk.LabelFrame):
             for child in widget.winfo_children():
                 if child not in self.non_connection_buttons:
                     child.config(state=state)
-
 
 # ================================
 # Output Frame: Displays Logs and Responses
@@ -705,7 +744,8 @@ class GaugeApplication:
             self.root,
             self.try_all_baud_rates,
             self.send_enq,
-            self.show_port_settings
+            self.show_port_settings,
+            self.output_format  # Pass output format variable
         )
         self.debug_frame.pack(fill=tk.X, padx=5, pady=5)
 
@@ -768,9 +808,11 @@ class GaugeApplication:
             self.serial_frame.baud_var.set(str(params["baudrate"]))
 
             # Determine RS485 mode and address based on gauge type
-            rs485_mode = gauge_type == "PPG550"
-            rs485_address = params.get("address", 254) if rs485_mode else 254
-            self.serial_frame.set_rs485_mode(rs485_mode, rs485_address)
+            rs485_supported = "rs_modes" in params and "RS485" in params["rs_modes"]
+            rs485_address = params.get("address", 254) if rs485_supported else 254
+
+            # Update RS485 mode in the UI
+            self.serial_frame.set_rs485_mode(rs485_supported, rs485_address)
 
             # Set the default output format for the selected gauge type
             self.output_format.set(GAUGE_OUTPUT_FORMATS.get(gauge_type))
@@ -783,10 +825,10 @@ class GaugeApplication:
             # Apply new serial settings
             self.apply_serial_settings({
                 'baudrate': params["baudrate"],
-                'bytesize': 8,
-                'parity': 'N',
-                'stopbits': 1.0,
-                'rs485_mode': rs485_mode,
+                'bytesize': params.get("bytesize", 8),
+                'parity': params.get("parity", 'N'),
+                'stopbits': params.get("stopbits", 1.0),
+                'rs485_mode': rs485_supported,
                 'rs485_address': rs485_address
             })
 
@@ -923,11 +965,11 @@ class GaugeApplication:
         Args:
             settings (dict): Dictionary containing the new serial settings.
         """
-        # Update the current serial settings with the new values
-        self.current_serial_settings.update(settings)
+        try:
+            # Update the current serial settings with the new values
+            self.current_serial_settings.update(settings)
 
-        if self.communicator:
-            try:
+            if self.communicator:
                 # Apply settings to the active communicator's serial port
                 if self.communicator.ser and self.communicator.ser.is_open:
                     self.communicator.ser.baudrate = settings['baudrate']
@@ -938,22 +980,17 @@ class GaugeApplication:
                     # Handle RS485 mode settings
                     if settings.get('rs485_mode', False):
                         self.communicator.set_rs_mode("RS485")
-                        if isinstance(self.communicator.protocol, PPG550Protocol):
+                        if isinstance(self.communicator.protocol, PPGProtocol):  # Changed from PPG550Protocol
                             self.communicator.protocol.address = settings.get('rs485_address', 254)
                     else:
                         self.communicator.set_rs_mode("RS232")
 
-                # Log the updated serial settings
-                self.log_message(f"Serial settings updated: {settings}")
-                if settings.get('rs485_mode', False):
-                    self.log_message(f"RS485 Address: {settings.get('rs485_address', 254)}")
+                    self.log_message(f"Serial settings updated: {settings}")
+                    if settings.get('rs485_mode', False):
+                        self.log_message(f"RS485 Address: {settings.get('rs485_address', 254)}")
 
-            except Exception as e:
-                # Handle any exceptions during settings application
-                self.log_message(f"Failed to update serial settings: {str(e)}")
-        else:
-            # Log that settings are saved for the next connection attempt
-            self.log_message(f"Settings saved for the next connection: {settings}")
+        except Exception as e:
+            self.log_message(f"Failed to update serial settings: {str(e)}")
 
     def send_command(self, command: str, response: Optional[GaugeResponse] = None):
         """
@@ -992,7 +1029,6 @@ class GaugeApplication:
         Uses GaugeTester to systematically test different baud rates and identify the gauge.
         """
         if self.communicator:
-            # Disconnect any existing communicator before testing
             self.communicator.disconnect()
             self.communicator = None
 
@@ -1007,6 +1043,9 @@ class GaugeApplication:
                 logger=self
             )
 
+            # Set the output format according to current selection
+            temp_communicator.set_output_format(self.output_format.get())
+
             # Create tester instance
             tester = GaugeTester(temp_communicator, self)
 
@@ -1014,10 +1053,7 @@ class GaugeApplication:
             success = tester.try_all_baud_rates(port)
 
             if success:
-                # Get the successful baud rate from the communicator
                 successful_baud = temp_communicator.baudrate
-
-                # Update serial settings with the successful baud rate
                 self.serial_frame.baud_var.set(str(successful_baud))
                 self.apply_serial_settings({
                     'baudrate': successful_baud,
@@ -1070,6 +1106,9 @@ class GaugeApplication:
             return
 
         try:
+            # Set output format before sending ENQ
+            self.communicator.set_output_format(self.output_format.get())
+
             # Create tester instance and perform ENQ test
             tester = GaugeTester(self.communicator, self)
             if tester.send_enq():
@@ -1077,7 +1116,6 @@ class GaugeApplication:
             else:
                 self.log_message("> ENQ test failed")
         except Exception as e:
-            # Handle any exceptions during ENQ sending
             self.log_message(f"ENQ test error: {str(e)}")
 
     def show_port_settings(self):

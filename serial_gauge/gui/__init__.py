@@ -4,8 +4,9 @@ from ..communicator import *
 
 __all__ = [
     'GaugeProtocol',
-    'PCG550Protocol',
-    'PPG550Protocol',
+    'PCGProtocol',
+    'PPGProtocol',  # This is the base class for PPG550
     'MAGMPGProtocol',
+    'CDGProtocol',
     'get_protocol'
 ]

@@ -10,15 +10,18 @@ import binascii
 
 def get_protocol(gauge_type: str, params: dict) -> GaugeProtocol:
     """Factory function to get the appropriate protocol handler based on gauge type."""
-    if gauge_type == "PPG550":
-        return PPG550Protocol(address=params.get("address", 254))
+    if gauge_type in ["PPG550", "PPG570"]:
+        return PPGProtocol(
+            address=params.get("address", 254),
+            gauge_type=gauge_type
+        )
     elif gauge_type in ["PCG550", "PSG550"]:
-        return PCG550Protocol(device_id=params.get("device_id", 0x02))
+        return PCGProtocol(device_id=params.get("device_id", 0x02))
     elif gauge_type == "MAG500":
         return MAGMPGProtocol(device_id=params.get("device_id", 0x14))
     elif gauge_type == "MPG500":
         return MAGMPGProtocol(device_id=params.get("device_id", 0x04))
-    elif gauge_type == "CDG045D":  # Add this condition
+    elif gauge_type == "CDG045D":
         return CDGProtocol()
     else:
         raise ValueError(f"Unsupported gauge type: {gauge_type}")
@@ -120,97 +123,58 @@ class IntelligentCommandSender:
 
     @staticmethod
     def send_manual_command(communicator, input_string: str, force_format: str = None) -> dict:
-        """
-        Intelligently send a manual command and format the response
-
-        Args:
-            communicator: GaugeCommunicator instance
-            input_string: Command string in any supported format
-            force_format: Optional format to force for output
-
-        Returns:
-            Dictionary containing command info and response
-        """
+        """Send manual command and format according to specified format"""
         try:
-            # Detect input format
+            # Detect input format and convert to bytes
             input_format, normalized = IntelligentCommandSender.detect_format(input_string)
-
-            # Convert to bytes
             command_bytes = IntelligentCommandSender.convert_to_bytes(input_format, normalized)
 
-            # Prepare result dictionary
             result = {
                 "input_format_detected": input_format,
-                "command_bytes": command_bytes.hex(' '),
-                "command_binary": ' '.join(f'{b:08b}' for b in command_bytes),
-                "command_decimal": ' '.join(str(b) for b in command_bytes),
+                "success": False,
+                "error": None,
+                "response_formatted": None,
+                "response_raw": None,
                 "rs_mode": communicator.rs_mode
             }
 
-            # Send command if communicator is ready
             if communicator.ser and communicator.ser.is_open:
-                # Clear buffers
                 communicator.ser.reset_input_buffer()
                 communicator.ser.reset_output_buffer()
 
-                # Handle RS485 mode if enabled
+                # Handle RS485 mode
                 if communicator.rs_mode == "RS485":
-                    # Configure RS485 settings if needed
                     if hasattr(communicator.ser, 'rs485_mode'):
                         communicator.ser.rs485_mode = communicator.rs485_config
-
-                    # Set RTS high for transmit
                     communicator.ser.setRTS(communicator.rts_level_for_tx)
                     time.sleep(communicator.rts_delay_before_tx)
 
-                    # Log RS485 state
-                    communicator.logger.debug("RS485: Switched to transmit mode")
-
-                # Send command
-                communicator.logger.debug(f"Sending command: {command_bytes.hex(' ')}")
                 communicator.ser.write(command_bytes)
                 communicator.ser.flush()
 
-                # Switch back to receive for RS485
                 if communicator.rs_mode == "RS485":
-                    # Set RTS low for receive
                     communicator.ser.setRTS(communicator.rts_level_for_rx)
                     time.sleep(communicator.rts_delay_before_rx)
-                    communicator.logger.debug("RS485: Switched to receive mode")
 
-                # Read response with proper timing
-                time.sleep(communicator.rts_delay)  # Wait for line to settle
+                time.sleep(communicator.rts_delay)
                 response = communicator.read_response()
 
                 if response:
-                    # Determine best output format if not forced
-                    suggested_format = force_format or IntelligentCommandSender.format_output_suggestion(response)
-
-                    # Set communicator output format
+                    # Format response according to specified format
+                    suggested_format = force_format or communicator.output_format
                     communicator.set_output_format(suggested_format)
 
-                    # Format response
-                    formatted_response = communicator.format_response(response)
-
-                    # Add response info to result
                     result.update({
-                        "response_format": suggested_format,
-                        "response_raw": response.hex(' '),
-                        "response_formatted": formatted_response,
                         "success": True,
-                        "rs485_timing": {
-                            "pre_delay": communicator.rts_delay_before_tx,
-                            "post_delay": communicator.rts_delay_before_rx
-                        } if communicator.rs_mode == "RS485" else None
+                        "response_raw": response.hex(),
+                        "response_formatted": communicator.format_response(response)
                     })
                 else:
                     result.update({
-                        "success": False,
                         "error": "No response received"
                     })
             else:
                 result.update({
-                    "success": False,
                     "error": "Port not open"
                 })
 
@@ -220,7 +184,9 @@ class IntelligentCommandSender:
             communicator.logger.error(f"Manual command failed: {str(e)}")
             return {
                 "success": False,
-                "error": str(e)
+                "error": str(e),
+                "response_formatted": None,
+                "response_raw": None
             }
 
 class ResponseHandler:
@@ -363,8 +329,9 @@ class GaugeCommunicator:
         self.params = GAUGE_PARAMETERS[gauge_type]
         self.protocol = get_protocol(gauge_type, self.params)
 
-        # Initialize handlers
+        # Initialize handlers and format
         initial_format = GAUGE_OUTPUT_FORMATS.get(gauge_type, "ASCII")
+        self.output_format = initial_format
         self.manual_sender = IntelligentCommandSender()
         self.response_handler = ResponseHandler(initial_format)
 
@@ -373,6 +340,8 @@ class GaugeCommunicator:
 
         # Setup communication modes
         self._init_communication_modes()
+
+        self.logger.debug(f"Initialized {gauge_type} communicator with {initial_format} format")
 
     def _init_serial_settings(self):
         """Initialize serial port settings from gauge parameters"""
@@ -420,45 +389,43 @@ class GaugeCommunicator:
             return False
 
     def send_command(self, command: GaugeCommand) -> GaugeResponse:
-        """Send command using IntelligentCommandSender"""
+        """Send command using protocol handler"""
         try:
-            # Create command bytes and convert to hex string
+            # Create command bytes
             cmd_bytes = self.protocol.create_command(command)
-            cmd_hex = cmd_bytes.hex(' ')
+            formatted_cmd = self.format_response(cmd_bytes)
+            self.logger.debug(f"Sending command: {formatted_cmd}")
 
             # Send command using IntelligentCommandSender
-            result = self.manual_sender.send_manual_command(self, cmd_hex, None)
+            result = self.manual_sender.send_manual_command(self, cmd_bytes.hex(' '), self.output_format)
 
             if not result['success']:
-                return self.response_handler.create_gauge_response(
+                return GaugeResponse(
                     raw_data=b"",
                     success=False,
-                    error_message=result['error']
+                    error_message=result['error'],
+                    formatted_data=""
                 )
 
-            # Handle response - explicitly format it for display
+            # Handle response
             if result['response_raw']:
                 response_bytes = bytes.fromhex(result['response_raw'])
-                protocol_response = self.protocol.parse_response(response_bytes)
+                return self.protocol.parse_response(response_bytes)
 
-                # Make sure we have formatted output
-                if not protocol_response.formatted_data:
-                    protocol_response.formatted_data = self.response_handler.format_response(response_bytes)
-
-                return protocol_response
-
-            return self.response_handler.create_gauge_response(
+            return GaugeResponse(
                 raw_data=b"",
                 success=False,
-                error_message="No response received"
+                error_message="No response received",
+                formatted_data=""
             )
 
         except Exception as e:
             self.logger.error(f"Command failed: {str(e)}")
-            return self.response_handler.create_gauge_response(
+            return GaugeResponse(
                 raw_data=b"",
                 success=False,
-                error_message=str(e)
+                error_message=str(e),
+                formatted_data=""
             )
 
     def read_response(self) -> Optional[bytes]:
@@ -468,12 +435,15 @@ class GaugeCommunicator:
 
         try:
             if self.continuous_output:
-                response = self._read_with_frame_sync(0x07, 9)  # CDG uses 9-byte frames with 0x07 sync
-            elif isinstance(self.protocol, PPG550Protocol):
-                response = self._read_until_terminator(b';FF')
+                response = self._read_with_frame_sync(0x07, 9)
+            elif isinstance(self.protocol, PPGProtocol):
+                response = self._read_until_terminator(b'\\')
             else:
                 response = self._read_available()
 
+            if response:
+                formatted_resp = self.format_response(response)
+                self.logger.debug(f"Received response: {formatted_resp}")
             return response
 
         except Exception as e:
@@ -504,8 +474,16 @@ class GaugeCommunicator:
                 response += byte
                 if response.endswith(terminator):
                     return bytes(response)
+
+                # For PPG gauges, also check for NAK response
+                if response.startswith(b'@NAK'):
+                    # Read until backslash
+                    while not response.endswith(b'\\'):
+                        if self.ser.in_waiting:
+                            response += self.ser.read(1)
+                    return bytes(response)
             else:
-                if response:
+                if response:  # Return what we have if no more data is coming
                     return bytes(response)
                 time.sleep(0.01)
 
@@ -559,8 +537,35 @@ class GaugeCommunicator:
         self.response_handler.set_output_format(format_type)
         self.logger.debug(f"Output format set to: {format_type}")
 
-    # The remaining methods remain largely unchanged as they handle
-    # basic serial port operations
+    def format_response(self, response: bytes) -> str:
+        """Format response according to current output format"""
+        return self.response_handler.format_response(response)
+
+    def apply_serial_settings(self, settings: dict):
+        """Apply new serial port settings"""
+        try:
+            if self.ser and self.ser.is_open:
+                self.ser.baudrate = settings['baudrate']
+                self.ser.bytesize = settings['bytesize']
+                self.ser.parity = settings['parity']
+                self.ser.stopbits = settings['stopbits']
+
+                # Handle RS485 mode settings
+                if settings.get('rs485_mode', False):
+                    self.set_rs_mode("RS485")
+                    if isinstance(self.protocol, PPGProtocol):  # Changed from PPG550Protocol
+                        self.protocol.address = settings.get('rs485_address', 254)
+                else:
+                    self.set_rs_mode("RS232")
+
+                self.logger.debug(f"Serial settings updated: {settings}")
+                if settings.get('rs485_mode', False):
+                    self.logger.debug(f"RS485 Address: {settings.get('rs485_address', 254)}")
+
+        except Exception as e:
+            self.logger.error(f"Failed to update serial settings: {str(e)}")
+            raise
+
     def set_rs_mode(self, mode: str) -> bool:
         if mode not in self.rs_modes:
             return False
@@ -575,29 +580,40 @@ class GaugeCommunicator:
         return True
 
     def set_continuous_reading(self, enabled: bool):
+        """Enable/disable continuous reading mode"""
         self.continuous_reading = enabled
         self._stop_continuous = not enabled
+        self.logger.debug(f"Continuous reading {'enabled' if enabled else 'disabled'}")
 
     def stop_continuous_reading(self):
+        """Stop continuous reading mode"""
         self._stop_continuous = True
+        self.logger.debug("Stopping continuous reading")
 
     def test_connection(self) -> bool:
         """Test connection using protocol's test commands"""
         if not self.ser or not self.ser.is_open:
             return False
 
-        for cmd_bytes in self.protocol.test_commands():
-            result = self.manual_sender.send_manual_command(
-                self,
-                cmd_bytes.hex(' '),
-                None
-            )
-            if result['success'] and result['response_raw']:
-                # Log the response for debugging
-                self.logger.debug(f"Test response: {result['response_formatted']}")
-                return True
+        try:
+            for cmd_bytes in self.protocol.test_commands():
+                self.logger.debug(f"Testing connection with command: {cmd_bytes.hex(' ')}")
+                result = self.manual_sender.send_manual_command(
+                    self,
+                    cmd_bytes.hex(' '),
+                    None
+                )
+                if result['success'] and result['response_raw']:
+                    self.logger.debug(f"Test response: {result['response_formatted']}")
+                    return True
+                else:
+                    self.logger.debug("Test command failed or no response")
 
-        return False
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Connection test failed: {str(e)}")
+            return False
 
     def disconnect(self) -> bool:
         try:
@@ -621,6 +637,36 @@ class GaugeTester:
         self.params = GAUGE_PARAMETERS[self.gauge_type]
         self.protocol = communicator.protocol
         self.test_commands = self._get_test_commands()
+
+    def send_command_formatted(self, command_bytes: bytes) -> Optional[str]:
+        """Send command and return formatted response based on current output format"""
+        if not self.communicator or not self.communicator.ser:
+            return None
+
+        try:
+            # Clear buffers
+            self.communicator.ser.reset_input_buffer()
+            self.communicator.ser.reset_output_buffer()
+
+            # Format command for logging using current output format
+            formatted_cmd = self.communicator.format_response(command_bytes)
+            self.logger.debug(f"Sending command: {formatted_cmd}")
+
+            # Send command
+            self.communicator.ser.write(command_bytes)
+            self.communicator.ser.flush()
+
+            # Read response
+            response = self.communicator.read_response()
+            if response:
+                formatted_resp = self.communicator.format_response(response)
+                self.logger.debug(f"Received response: {formatted_resp}")
+                return formatted_resp
+            return None
+
+        except Exception as e:
+            self.logger.error(f"Command send error: {str(e)}")
+            return None
 
     def _get_test_commands(self) -> dict:
         """Get test commands specific to the gauge type"""
@@ -646,50 +692,35 @@ class GaugeTester:
         return commands
 
     def test_connection(self) -> bool:
-        """Test connection using appropriate commands for gauge type"""
+        """Test connection using protocol's test commands"""
         if not self.communicator.ser or not self.communicator.ser.is_open:
             return False
 
-        for cmd_name, cmd_info in self.test_commands.items():
-            try:
-                # Create appropriate command based on gauge type
-                if self.gauge_type in ["PCG550", "PSG550", "MAG500", "MPG500"]:
-                    command = GaugeCommand(
-                        name=cmd_name,
-                        command_type="?",
-                        parameters={"pid": cmd_info["pid"], "cmd": cmd_info["cmd"]}
-                    )
-                elif self.gauge_type == "PPG550":
-                    command = GaugeCommand(
-                        name=cmd_info["cmd"],
-                        command_type="?"
-                    )
-                else:  # CDG045D
-                    command = GaugeCommand(
-                        name=cmd_info["name"],
-                        command_type=cmd_info["cmd"]
-                    )
+        try:
+            for cmd_bytes in self.communicator.protocol.test_commands():
+                formatted_cmd = self.communicator.format_response(cmd_bytes)
+                self.logger.debug(f"Testing connection with command: {formatted_cmd}")
 
-                # Convert command to bytes using protocol
-                cmd_bytes = self.protocol.create_command(command)
-
-                # Send using IntelligentCommandSender
-                result = self.communicator.manual_sender.send_manual_command(
+                result = IntelligentCommandSender.send_manual_command(
                     self.communicator,
                     cmd_bytes.hex(' '),
                     self.communicator.output_format
                 )
 
-                if result['success'] and result['response_raw']:
-                    self.logger.debug(f"Test response ({cmd_name}): {result['response_formatted']}")
-                    return True
+                if result['success']:
+                    if 'response_formatted' in result:
+                        self.logger.debug(f"Test response: {result['response_formatted']}")
+                        return True
+                    else:
+                        self.logger.debug("Test response missing formatted data")
+                else:
+                    self.logger.debug(f"Test command failed: {result.get('error', 'Unknown error')}")
 
-            except Exception as e:
-                self.logger.error(f"Test command failed: {str(e)}")
-                continue
+            return False
 
-        return False
-
+        except Exception as e:
+            self.logger.error(f"Connection test failed: {str(e)}")
+            return False
     def try_all_baud_rates(self, port: str) -> bool:
         """Test connection with different baud rates"""
         # Factory default rates first, then others
@@ -713,14 +744,14 @@ class GaugeTester:
                 )
                 temp_communicator.baudrate = baud
 
-                # Create temporary tester
-                temp_tester = GaugeTester(temp_communicator, self.logger)
-
                 if temp_communicator.connect():
-                    if temp_tester.test_connection():
+                    # Test connection with commands
+                    if self.test_connection():
                         self.logger.info(f"Successfully connected at {baud} baud!")
                         temp_communicator.disconnect()
                         return True
+                    else:
+                        self.logger.debug(f"Connection test failed at {baud} baud")
 
                 if temp_communicator.ser and temp_communicator.ser.is_open:
                     temp_communicator.disconnect()
@@ -747,21 +778,14 @@ class GaugeTester:
             self.logger.debug("> Sending ENQ (0x05)")
 
             # Use IntelligentCommandSender to send ENQ
-            result = self.communicator.manual_sender.send_manual_command(
+            result = IntelligentCommandSender.send_manual_command(
                 self.communicator,
                 "05",  # ENQ in hex
                 self.communicator.output_format
             )
 
-            if result['success'] and result['response_raw']:
+            if result['success'] and 'response_formatted' in result:
                 self.logger.debug(f"< ENQ Response: {result['response_formatted']}")
-                try:
-                    # Try to decode as ASCII if possible
-                    response_bytes = bytes.fromhex(result['response_raw'])
-                    ascii_resp = response_bytes.decode('ascii', errors='replace')
-                    self.logger.debug(f"< ASCII: {ascii_resp}")
-                except:
-                    pass
                 return True
             else:
                 self.logger.debug("< No response to ENQ")
@@ -770,6 +794,7 @@ class GaugeTester:
         except Exception as e:
             self.logger.error(f"ENQ test error: {str(e)}")
             return False
+
 
     def get_supported_test_commands(self) -> dict:
         """Return dictionary of supported test commands for this gauge type"""
