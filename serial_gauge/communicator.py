@@ -21,11 +21,12 @@ def get_protocol(gauge_type: str, params: dict) -> GaugeProtocol:
         return MAGMPGProtocol(device_id=params.get("device_id", 0x14))
     elif gauge_type == "MPG500":
         return MAGMPGProtocol(device_id=params.get("device_id", 0x04))
-    elif gauge_type == "CDG045D":
+    elif gauge_type in ["CDG045D", "CDG025D"]:  # Add CDG025D here
         return CDGProtocol()
+    elif gauge_type in ["TC600"]:
+        return TC600Protocol()
     else:
         raise ValueError(f"Unsupported gauge type: {gauge_type}")
-
 class IntelligentCommandSender:
     @staticmethod
     def detect_format(input_string: str) -> tuple[str, str]:
@@ -591,29 +592,102 @@ class GaugeCommunicator:
         self.logger.debug("Stopping continuous reading")
 
     def test_connection(self) -> bool:
-        """Test connection using protocol's test commands"""
+        """
+        Test connection using protocol's test commands and format output according to selected format.
+
+        Returns:
+            bool: True if connection test successful, False otherwise
+        """
         if not self.ser or not self.ser.is_open:
+            self.logger.error("Not connected")
             return False
 
         try:
+            # Get the currently selected output format
+            current_format = self.output_format
+            self.logger.debug(f"Testing connection using {current_format} format")
+
+            # Try each test command from the protocol
             for cmd_bytes in self.protocol.test_commands():
-                self.logger.debug(f"Testing connection with command: {cmd_bytes.hex(' ')}")
-                result = self.manual_sender.send_manual_command(
-                    self,
-                    cmd_bytes.hex(' '),
-                    None
-                )
-                if result['success'] and result['response_raw']:
-                    self.logger.debug(f"Test response: {result['response_formatted']}")
+                # Format outgoing command according to selected format
+                if current_format == "Hex":
+                    formatted_cmd = ' '.join(f'{b:02X}' for b in cmd_bytes)
+                elif current_format == "ASCII":
+                    formatted_cmd = self._format_protocol_message(cmd_bytes)
+                elif current_format == "Decimal":
+                    formatted_cmd = ' '.join(str(b) for b in cmd_bytes)
+                elif current_format == "Binary":
+                    formatted_cmd = ' '.join(f'{b:08b}' for b in cmd_bytes)
+                elif current_format == "UTF-8":
+                    formatted_cmd = cmd_bytes.decode('utf-8', errors='replace')
+                else:  # Raw Bytes
+                    formatted_cmd = str(cmd_bytes)
+
+                self.logger.debug(f"Testing connection with command: {formatted_cmd}")
+
+                # Clear buffers before sending
+                self.ser.reset_input_buffer()
+                self.ser.reset_output_buffer()
+
+                # Send command and read response
+                self.ser.write(cmd_bytes)
+                self.ser.flush()
+                response = self.read_response()
+
+                if response:
+                    # Format response according to selected format
+                    if current_format == "Hex":
+                        formatted_resp = ' '.join(f'{b:02X}' for b in response)
+                    elif current_format == "ASCII":
+                        formatted_resp = self._format_protocol_message(response)
+                    elif current_format == "Decimal":
+                        formatted_resp = ' '.join(str(b) for b in response)
+                    elif current_format == "Binary":
+                        formatted_resp = ' '.join(f'{b:08b}' for b in response)
+                    elif current_format == "UTF-8":
+                        formatted_resp = response.decode('utf-8', errors='replace')
+                    else:  # Raw Bytes
+                        formatted_resp = str(response)
+
+                    self.logger.debug(f"Received response: {formatted_resp}")
+                    self.logger.debug(f"Test response: {formatted_resp}")
                     return True
                 else:
-                    self.logger.debug("Test command failed or no response")
+                    self.logger.debug("No response received")
 
             return False
 
         except Exception as e:
             self.logger.error(f"Connection test failed: {str(e)}")
             return False
+
+    def _format_protocol_message(self, data: bytes) -> str:
+        """
+        Format a protocol message with decoded fields when using ASCII/UTF-8 format.
+
+        Args:
+            data: The raw protocol message bytes
+
+        Returns:
+            str: Formatted protocol message with decoded fields
+        """
+        try:
+            # Decode the message
+            msg = data.decode('ascii', errors='replace')
+
+            # For Pfeiffer protocol messages, decode the fields
+            if len(msg) >= 10:
+                addr = msg[0:3]
+                cmd_type = "Write" if msg[3:5] == "10" else "Read"
+                param = msg[5:8]
+                data_section = msg[8:] if len(msg) > 8 else ""
+
+                return f"Addr={addr} {cmd_type} Param={param} Data={data_section}"
+
+            return msg
+        except Exception:
+            # If decoding fails, return hex representation
+            return ' '.join(f'{b:02X}' for b in data)
 
     def disconnect(self) -> bool:
         try:

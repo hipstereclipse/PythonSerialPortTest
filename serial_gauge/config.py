@@ -15,7 +15,8 @@ GAUGE_OUTPUT_FORMATS = {
     "BPG40x": "Hex",     # BPG40x uses binary protocol
     "BPG552": "Hex",     # BPG552 uses binary protocol
     "BCG450": "Hex",     # BCG450 uses binary protocol
-    "BCG552": "Hex"      # BCG552 uses binary protocol
+    "BCG552": "Hex",      # BCG552 uses binary protocol
+    "TC600": "ASCII"  # TC600 uses ASCII protocol
 }
 
 # Configuration constants
@@ -169,6 +170,32 @@ GAUGE_PARAMETERS = {
         "rs_modes": ["RS232"],  # CDG only supports RS232
         "timeout": 1,  # 1 second timeout
         "write_timeout": 1
+    },
+    "TC600": {
+        "baudrate": 9600,
+        "bytesize": serial.EIGHTBITS,
+        "parity": serial.PARITY_NONE,
+        "stopbits": serial.STOPBITS_ONE,
+        "device_id": 0x02,  # Default device ID for TC600
+        "rs_modes": ["RS232", "RS485"],  # Supports both interfaces
+        "commands": {
+            "motor_on": {"pid": 23, "cmd": 3, "desc": "Start/stop pump motor"},
+            "get_speed": {"pid": 309, "cmd": 1, "desc": "Read actual rotation speed (rpm)"},
+            "set_speed": {"pid": 308, "cmd": 3, "desc": "Set nominal rotation speed"},
+            "get_current": {"pid": 310, "cmd": 1, "desc": "Read motor current (A)"},
+            "get_temp_electronic": {"pid": 326, "cmd": 1, "desc": "Read electronics temperature (°C)"},
+            "get_temp_motor": {"pid": 330, "cmd": 1, "desc": "Read motor temperature (°C)"},
+            "get_temp_bearing": {"pid": 342, "cmd": 1, "desc": "Read bearing temperature (°C)"},
+            "get_error": {"pid": 303, "cmd": 1, "desc": "Read current error code"},
+            "get_warning": {"pid": 305, "cmd": 1, "desc": "Read warning status"},
+            "operating_hours": {"pid": 311, "cmd": 1, "desc": "Read total operating hours"},
+            "set_runup_time": {"pid": 700, "cmd": 3, "desc": "Set maximum run-up time (seconds)"},
+            "standby_speed": {"pid": 707, "cmd": 3, "desc": "Set standby rotation speed (%)"},
+            "vent_mode": {"pid": 30, "cmd": 3, "desc": "Set venting valve mode"},
+            "vent_time": {"pid": 721, "cmd": 3, "desc": "Set venting time (seconds)"}
+        },
+        "timeout": 1.0,
+        "write_timeout": 1.0
     }
 }
 

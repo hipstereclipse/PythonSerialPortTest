@@ -5,8 +5,10 @@ Supports RS232/RS485 communication with various gauge types.
 """
 
 import queue
+import sys
 import threading
 import tkinter as tk
+from io import StringIO
 from tkinter import ttk
 from datetime import datetime
 import time
@@ -48,28 +50,23 @@ class CommandFrame(ttk.LabelFrame):
         # Set up variable traces
         self.gauge_var.trace('w', self._update_commands)
         self.cmd_var.trace('w', self._update_command_info)
+        self.cmd_type.trace('w', self._update_parameter_state)
 
     def _create_widgets(self):
-        """Create and layout all widgets in the command frame"""
         # Manual Command Section
         manual_frame = ttk.LabelFrame(self, text="Manual Command")
         manual_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # Command Entry Label and Entry Field
         ttk.Label(manual_frame, text="Command:").pack(side=tk.LEFT, padx=5)
         self.manual_cmd_entry = ttk.Entry(manual_frame, width=50)
         self.manual_cmd_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
-        # Send Button for Manual Command
         self.manual_send_button = ttk.Button(
             manual_frame,
             text="Send",
             command=self.send_manual_command
         )
         self.manual_send_button.pack(side=tk.LEFT, padx=5)
-
-        # Bind Enter key to send command
-        self.manual_cmd_entry.bind('<Return>', lambda e: self.send_manual_command())
 
         # Quick Commands Section
         quick_frame = ttk.LabelFrame(self, text="Quick Commands")
@@ -86,14 +83,17 @@ class CommandFrame(ttk.LabelFrame):
         self.cmd_combo.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
         # Command type radio buttons
+        radio_frame = ttk.Frame(quick_frame)
+        radio_frame.pack(side=tk.LEFT, padx=5)
+
         self.query_radio = ttk.Radiobutton(
-            quick_frame,
+            radio_frame,
             text="Query (?)",
             variable=self.cmd_type,
             value="?"
         )
         self.set_radio = ttk.Radiobutton(
-            quick_frame,
+            radio_frame,
             text="Set (!)",
             variable=self.cmd_type,
             value="!"
@@ -102,25 +102,35 @@ class CommandFrame(ttk.LabelFrame):
         self.set_radio.pack(side=tk.LEFT, padx=5)
 
         # Parameter frame
-        param_frame = ttk.Frame(quick_frame)
+        param_frame = ttk.Frame(self)  # Changed to be direct child of self for better layout
         param_frame.pack(fill=tk.X, padx=5, pady=5)
 
         self.param_label = ttk.Label(param_frame, text="Parameter:")
         self.param_label.pack(side=tk.LEFT, padx=5)
+
+        # Create both Entry and Combobox for parameters
         self.param_entry = ttk.Entry(
             param_frame,
             textvariable=self.param_var,
             width=30
         )
-        self.param_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
-        # Send button for quick command
+        self.param_combo = ttk.Combobox(
+            param_frame,
+            textvariable=self.param_var,
+            state="readonly",
+            width=30
+        )
+
+        # Initially pack neither - they will be shown as needed
+        # self.param_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
         self.quick_send_button = ttk.Button(
             param_frame,
             text="Send",
             command=self.send_quick_command
         )
-        self.quick_send_button.pack(side=tk.LEFT, padx=5)
+        self.quick_send_button.pack(side=tk.RIGHT, padx=5)
 
         # Description label
         self.desc_label = ttk.Label(
@@ -129,6 +139,26 @@ class CommandFrame(ttk.LabelFrame):
             wraplength=500
         )
         self.desc_label.pack(fill=tk.X, padx=5, pady=5)
+
+    def _update_parameter_widget(self, cmd_info: dict):
+        """Update parameter input widget based on command type"""
+        # Remove both widgets first
+        self.param_entry.pack_forget()
+        self.param_combo.pack_forget()
+
+        if self.cmd_type.get() == "!":
+            if "options" in cmd_info:
+                # Use Combobox for predefined options
+                options = [f"{val} - {desc}" for val, desc in zip(cmd_info["options"], cmd_info["option_desc"])]
+                self.param_combo['values'] = options
+                self.param_combo.set(options[0] if options else "")
+                self.param_combo.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+            else:
+                # Use Entry for numeric values
+                self.param_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+                if "min" in cmd_info and "max" in cmd_info:
+                    self.desc_var.set(
+                        f"{cmd_info['desc']} (Range: {cmd_info['min']}-{cmd_info['max']} {cmd_info.get('unit', '')})")
 
     def _update_commands(self, *args):
         """Update available commands when gauge type changes"""
@@ -148,44 +178,24 @@ class CommandFrame(ttk.LabelFrame):
     def _update_command_info(self, *args):
         """Update command information and UI state when selected command changes"""
         selected = self.cmd_var.get()
-        if selected:
-            # Extract command name from selection (remove description)
+        if selected and self.communicator:
             cmd_name = selected.split(" - ")[0]
-            gauge_type = self.gauge_var.get()
+            cmd_info = self.communicator.protocol._command_defs.get(cmd_name, {})
 
-            if gauge_type in GAUGE_PARAMETERS:
-                cmd_info = GAUGE_PARAMETERS[gauge_type]["commands"].get(cmd_name, {})
-                self.desc_var.set(cmd_info.get("desc", "No description available"))
+            # Update description
+            self.desc_var.set(cmd_info.get("desc", "No description available"))
 
-                # Determine if command is read-only or writable
-                cmd_type = cmd_info.get("cmd", "read")  # Default to read
+            # Configure radio buttons based on command type
+            if cmd_info.get("write", False):
+                self.query_radio.configure(state="normal")
+                self.set_radio.configure(state="normal")
+            else:
+                self.cmd_type.set("?")
+                self.query_radio.configure(state="normal")
+                self.set_radio.configure(state="disabled")
 
-                # For CDG gauges
-                if gauge_type in ["CDG025D", "CDG045D"]:
-                    is_writable = cmd_info.get("cmd") in ["write", "special"]
-                # For other gauges
-                else:
-                    # Commands with cmd=1 are read-only, cmd=3 are writable
-                    is_writable = cmd_info.get("cmd") == 3
-
-                # Update UI state based on command type
-                if is_writable:
-                    # Enable both radio buttons and parameter entry
-                    self.query_radio.configure(state="normal")
-                    self.set_radio.configure(state="normal")
-                    self.param_entry.configure(state="normal")
-                    self.param_label.configure(state="normal")
-                else:
-                    # Force query mode and disable parameter entry for read-only commands
-                    self.cmd_type.set("?")
-                    self.query_radio.configure(state="normal")
-                    self.set_radio.configure(state="disabled")
-                    self.param_entry.configure(state="disabled")
-                    self.param_label.configure(state="disabled")
-                    self.param_var.set("")  # Clear parameter field
-
-                # Update parameter field state based on command type
-                self._update_parameter_state()
+            # Update parameter state
+            self._update_parameter_state()
 
     def send_manual_command(self):
         """Send manual command entered by user"""
@@ -211,14 +221,39 @@ class CommandFrame(ttk.LabelFrame):
                 self.command_callback(cmd, response=response)
 
     def _update_parameter_state(self, *args):
-        """Update parameter entry state based on command type selection"""
+        """Update parameter widget state based on command type and available options"""
+        if not self.communicator or not self.cmd_var.get():
+            return
+
+        cmd_name = self.cmd_var.get().split(" - ")[0]
+        cmd_info = self.communicator.protocol._command_defs.get(cmd_name, {})
+
+        # Hide both widgets initially
+        self.param_entry.pack_forget()
+        self.param_combo.pack_forget()
+
         if self.cmd_type.get() == "!":
-            self.param_entry.configure(state="normal")
             self.param_label.configure(state="normal")
+
+            if "options" in cmd_info:
+                # Show dropdown for predefined options
+                options = [f"{val} - {desc}" for val, desc in
+                           zip(cmd_info["options"], cmd_info["option_desc"])]
+                self.param_combo['values'] = options
+                self.param_combo.set(options[0] if options else "")
+                self.param_combo.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+                self.param_combo.configure(state="readonly")
+            else:
+                # Show entry field for numeric values
+                self.param_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+                self.param_entry.configure(state="normal")
+                # Add range hint to description if available
+                if "min" in cmd_info and "max" in cmd_info:
+                    self.desc_var.set(
+                        f"{cmd_info['desc']} (Range: {cmd_info['min']}-{cmd_info['max']} {cmd_info.get('unit', '')})")
         else:
-            self.param_entry.configure(state="disabled")
             self.param_label.configure(state="disabled")
-            self.param_var.set("")  # Clear parameter field
+            self.param_var.set("")  # Clear parameter value
 
     def send_quick_command(self):
         """Send quick command based on selection"""
@@ -228,24 +263,22 @@ class CommandFrame(ttk.LabelFrame):
         selected = self.cmd_var.get()
         if selected:
             cmd_name = selected.split(" - ")[0]
-            gauge_type = self.gauge_var.get()
 
-            if gauge_type in GAUGE_PARAMETERS:
-                cmd_info = GAUGE_PARAMETERS[gauge_type]["commands"].get(cmd_name, {})
+            # Extract the actual value from the parameter if it's an option with description
+            param_value = self.param_var.get()
+            if " - " in param_value:
+                param_value = param_value.split(" - ")[0]
 
-                command = GaugeCommand(
-                    name=cmd_name,
-                    command_type=self.cmd_type.get(),
-                    parameters={
-                        "value": self.param_var.get() if self.cmd_type.get() == "!" else None,
-                        **cmd_info
-                    }
-                )
+            command = GaugeCommand(
+                name=cmd_name,
+                command_type=self.cmd_type.get(),
+                parameters={"value": param_value} if self.cmd_type.get() == "!" else None
+            )
 
-                response = self.communicator.send_command(command)
+            response = self.communicator.send_command(command)
 
-                if self.command_callback:
-                    self.command_callback(cmd_name, response=response)
+            if self.command_callback:
+                self.command_callback(cmd_name, response=response)
 
     def set_enabled(self, enabled: bool):
         """Enable or disable all interactive widgets in the frame"""
@@ -550,39 +583,52 @@ class SerialSettingsFrame(ttk.LabelFrame):
 # Debug Frame: Provides Debugging Tools
 # ================================
 class DebugFrame(ttk.LabelFrame):
-    """Frame for debugging options and testing gauge communication."""
+    """
+    Frame for debugging options and testing gauge communication.
+    Uses the same output format as the main interface for consistency.
+    """
 
     def __init__(self, parent, baud_callback: Callable, enq_callback: Callable, settings_callback: Callable,
                  output_format: tk.StringVar):
         """
-        Initialize the DebugFrame with callbacks for debugging actions.
-        Added output_format parameter to respect selected format.
+        Initialize the debug frame with callbacks and shared output format.
+
+        Args:
+            parent: Parent widget
+            baud_callback: Function to test different baud rates
+            enq_callback: Function to send ENQ test
+            settings_callback: Function to show current settings
+            output_format: Shared StringVar containing selected output format
         """
         super().__init__(parent, text="Debug")
 
-        self.output_format = output_format  # Store reference to output format variable
+        # Store reference to shared output format
+        self.output_format = output_format
 
-        # Create and layout debug controls within the frame
+        # Store reference to parent for accessing OutputFrame
+        self.parent = parent
+
+        # Create main controls frame
         controls_frame = ttk.Frame(self)
         controls_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # Button to try all baud rates for connection testing
+        # Add baud rate testing button
         self.baud_button = ttk.Button(
             controls_frame,
             text="Try All Baud Rates",
-            command=baud_callback
+            command=lambda: self._wrap_debug_callback(baud_callback)
         )
         self.baud_button.pack(side=tk.LEFT, padx=5)
 
-        # Button to send an ENQ character for communication testing
+        # Add ENQ testing button
         self.enq_button = ttk.Button(
             controls_frame,
             text="Send ENQ",
-            command=enq_callback
+            command=lambda: self._wrap_debug_callback(enq_callback)
         )
         self.enq_button.pack(side=tk.LEFT, padx=5)
 
-        # Button to display current port settings
+        # Add settings display button
         self.settings_button = ttk.Button(
             controls_frame,
             text="Show Settings",
@@ -590,14 +636,121 @@ class DebugFrame(ttk.LabelFrame):
         )
         self.settings_button.pack(side=tk.LEFT, padx=5)
 
-        # Track buttons that don't require an active connection to remain enabled
+        # Track buttons that don't require connection
         self.non_connection_buttons = [self.settings_button]
 
-    def set_enabled(self, enabled: bool):
-        """Enable or disable debug buttons that require an active connection."""
-        state = "normal" if enabled else "disabled"
+    def _wrap_debug_callback(self, callback: Callable) -> Any:
+        """
+        Wrap debug callbacks to capture and format their output.
 
-        # Iterate through child widgets and update their state accordingly
+        Args:
+            callback: The original callback function
+
+        Returns:
+            The result of the callback function
+        """
+        try:
+            # Execute callback
+            result = callback()
+
+            # Get the most recent debug messages
+            if hasattr(self.parent, 'output_frame'):
+                debug_text = self.parent.output_frame.output_text.get("1.0", tk.END)
+                # Format any new protocol messages
+                formatted = self._format_debug_messages(debug_text)
+                # Update the output
+                if formatted != debug_text:
+                    self.parent.output_frame.clear()
+                    self.parent.output_frame.append_log(formatted)
+
+            return result
+
+        except Exception as e:
+            if hasattr(self.parent, 'output_frame'):
+                self.parent.output_frame.append_log(f"Debug error: {str(e)}")
+            return None
+
+    def _format_debug_messages(self, text: str) -> str:
+        """
+        Format all debug messages according to current output format.
+
+        Args:
+            text: The text containing debug messages
+
+        Returns:
+            Formatted debug text
+        """
+        lines = []
+        for line in text.split('\n'):
+            if "command:" in line.lower() or "response:" in line.lower():
+                formatted = self._format_protocol_message(line)
+                lines.append(formatted)
+            else:
+                lines.append(line)
+        return '\n'.join(lines)
+
+    def _format_protocol_message(self, message: str) -> str:
+        """
+        Format a protocol message according to current output format.
+
+        Args:
+            message: The protocol message to format
+
+        Returns:
+            Formatted message
+        """
+        try:
+            # Split into prefix and data parts
+            prefix, data = message.split(':', 1)
+            data = data.strip()
+
+            # Convert data to bytes if needed
+            if data.startswith("b'") or data.startswith('b"'):
+                data_bytes = eval(data)
+            elif all(c in '0123456789ABCDEFabcdef ' for c in data):
+                data_bytes = bytes.fromhex(data.replace(' ', ''))
+            else:
+                return message
+
+            # Format according to selected output format
+            current_format = self.output_format.get()
+
+            if current_format == "Hex":
+                formatted_data = ' '.join(f'{b:02X}' for b in data_bytes)
+            elif current_format == "ASCII":
+                formatted_data = data_bytes.decode('ascii', errors='replace')
+            elif current_format == "Decimal":
+                formatted_data = ' '.join(str(b) for b in data_bytes)
+            elif current_format == "Binary":
+                formatted_data = ' '.join(f'{b:08b}' for b in data_bytes)
+            elif current_format == "UTF-8":
+                formatted_data = data_bytes.decode('utf-8', errors='replace')
+            else:  # Raw Bytes
+                formatted_data = str(data_bytes)
+
+            # For ASCII and UTF-8, add protocol interpretation
+            if current_format in ["ASCII", "UTF-8"] and len(formatted_data) >= 10:
+                addr = formatted_data[0:3]
+                cmd_type = "Write" if formatted_data[3:5] == "10" else "Read"
+                param = formatted_data[5:8]
+                data_section = formatted_data[8:] if len(formatted_data) > 8 else ""
+
+                formatted_data = f"Addr={addr} {cmd_type} Param={param} Data={data_section}"
+
+            return f"{prefix}: {formatted_data}"
+
+        except Exception as e:
+            # If formatting fails, return original message
+            return message
+
+    def set_enabled(self, enabled: bool):
+        """
+        Enable or disable debug buttons based on connection state.
+
+        Args:
+            enabled: True to enable buttons, False to disable
+        """
+        state = "normal" if enabled else "disabled"
         for widget in self.winfo_children():
             for child in widget.winfo_children():
                 if child not in self.non_connection_buttons:
@@ -1025,10 +1178,10 @@ class GaugeApplication:
         """
         if response:
             if response.success:
-                self.log_message(f"\nCommand: {command}")
-                self.log_message(f"Response: {response.formatted_data}")
+                self.log_message(f">: {command}")
+                self.log_message(f"<: {response.formatted_data}")
             else:
-                self.log_message(f"\nCommand failed: {response.error_message}")
+                self.log_message(f"Command failed: {response.error_message}")
         else:
             self.log_message(f"\nUnable to send command: {command}")
 

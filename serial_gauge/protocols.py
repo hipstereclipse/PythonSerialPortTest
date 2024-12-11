@@ -180,11 +180,66 @@ class CDGProtocol(GaugeProtocol):
             if isinstance(cmd, CommandDefinition):
                 self._command_defs[cmd.name] = cmd
 
-    def create_command(self, command: str, params: Optional[Dict[str, Any]] = None) -> bytes:
+    def test_commands(self) -> List[bytes]:
+        """Return list of test commands for connection testing"""
+        commands = []
+
+        # Test Command 1: Read page 0 (device status)
+        test_cmd1 = bytearray([
+            0x03,  # Length
+            0x00,  # Service command (read)
+            0x00,  # Page 0
+            0x00,  # Data byte
+            0x00  # Checksum (calculated below)
+        ])
+        test_cmd1[4] = sum(test_cmd1[1:4]) & 0xFF  # Calculate checksum
+        commands.append(bytes(test_cmd1))
+
+        # Test Command 2: Read temperature status
+        test_cmd2 = bytearray([
+            0x03,  # Length
+            0x00,  # Service command (read)
+            0x02,  # Temperature status PID
+            0x00,  # Data byte
+            0x00  # Checksum (calculated below)
+        ])
+        test_cmd2[4] = sum(test_cmd2[1:4]) & 0xFF  # Calculate checksum
+        commands.append(bytes(test_cmd2))
+
+        # Test Command 3: Read Unit (mbar/Torr/Pa)
+        test_cmd3 = bytearray([
+            0x03,  # Length
+            0x00,  # Service command (read)
+            0x01,  # Unit PID
+            0x00,  # Data byte
+            0x00  # Checksum (calculated below)
+        ])
+        test_cmd3[4] = sum(test_cmd3[1:4]) & 0xFF  # Calculate checksum
+        commands.append(bytes(test_cmd3))
+
+        return commands
+
+    def is_valid_response(self, response: bytes) -> bool:
+        """Verify if response matches CDG protocol format"""
+        if len(response) != 9:
+            return False
+
+        # Check start byte (should be 0x07)
+        if response[0] != 0x07:
+            return False
+
+        # Verify checksum
+        calc_checksum = sum(response[1:8]) & 0xFF
+        if calc_checksum != response[8]:
+            return False
+
+        return True
+
+    def create_command(self, command: GaugeCommand) -> bytes:
         """Create CDG command bytes"""
-        cmd_def = self._command_defs.get(command)
+        cmd_def = self._command_defs.get(command.name)
         if not cmd_def:
-            raise ValueError(f"Unknown command: {command}")
+            raise ValueError(f"Unknown command: {command.name}")
 
         # Build 5-byte command frame
         msg = bytearray([
@@ -196,9 +251,9 @@ class CDGProtocol(GaugeProtocol):
         ])
 
         # Add parameters if writing
-        if params and cmd_def.write:
+        if command.command_type == "!" and command.parameters:
             msg[1] = 0x10  # Write command
-            msg[3] = self._encode_param(params.get('value', 0), cmd_def.param_type)
+            msg[3] = self._encode_param(command.parameters.get('value', 0), cmd_def.param_type)
         else:
             msg[1] = 0x00  # Read command
 
@@ -207,50 +262,68 @@ class CDGProtocol(GaugeProtocol):
 
         return bytes(msg)
 
-    def parse_response(self, response: bytes) -> Dict[str, Any]:
-        """Parse CDG response bytes"""
-        if len(response) != 9:
-            return self._error_response("Invalid response length")
+    def parse_response(self, response: bytes) -> GaugeResponse:
+        """Parse CDG response bytes and format as GaugeResponse"""
+        if not self.is_valid_response(response):
+            return GaugeResponse(
+                raw_data=response,
+                formatted_data="Invalid response format",
+                success=False,
+                error_message="Response validation failed"
+            )
 
-        # Verify start byte
-        if response[0] != 0x07:
-            return self._error_response("Invalid start byte")
+        try:
+            # Extract fields
+            page_no = response[1]
+            status = response[2]
+            error = response[3]
+            pressure_high = response[4]
+            pressure_low = response[5]
+            read_value = response[6]
+            sensor_type = response[7]
 
-        # Extract fields
-        page_no = response[1]
-        status = response[2]
-        error = response[3]
-        pressure_high = response[4]
-        pressure_low = response[5]
-        read_value = response[6]
-        sensor_type = response[7]
-        checksum = response[8]
+            # Parse pressure value
+            pressure_value = (pressure_high << 8) | pressure_low
+            if pressure_value & 0x8000:  # Handle negative values
+                pressure_value = -((~pressure_value + 1) & 0xFFFF)
+            pressure = pressure_value / 16384.0  # Scale factor
 
-        # Verify checksum
-        calc_checksum = sum(response[1:8]) & 0xFF
-        if calc_checksum != checksum:
-            return self._error_response("Checksum mismatch")
+            # Create formatted data string
+            formatted_data = {
+                "pressure": pressure,
+                "unit": self._get_unit_string(status),
+                "status": {
+                    "heating": bool(status & 0x80),
+                    "temp_ok": bool(status & 0x40),
+                    "emission": bool(status & 0x20)
+                },
+                "errors": self._parse_error_byte(error)
+            }
 
-        # Parse status byte
-        pressure_unit = (status >> 4) & 0x03
-        unit_str = {0: "mbar", 1: "Torr", 2: "Pa"}.get(pressure_unit, "unknown")
+            return GaugeResponse(
+                raw_data=response,
+                formatted_data=str(formatted_data),
+                success=True,
+                error_message=None
+            )
 
-        # Calculate pressure value
-        pressure_value = ((pressure_high << 8) | pressure_low)
-        if pressure_value & 0x8000:  # Handle negative values
-            pressure_value = -((~pressure_value + 1) & 0xFFFF)
-        pressure = pressure_value / 16384.0  # Scale factor
+        except Exception as e:
+            return GaugeResponse(
+                raw_data=response,
+                formatted_data="",
+                success=False,
+                error_message=f"Parse error: {str(e)}"
+            )
 
-        return {
-            "success": True,
-            "pressure": pressure,
-            "unit": unit_str,
-            "status": {
-                "heating": bool(status & 0x80),
-                "temp_ok": bool(status & 0x40)
-            },
-            "errors": self._parse_error_byte(error)
+    def _get_unit_string(self, status_byte: int) -> str:
+        """Convert unit bits from status byte to string"""
+        unit_bits = (status_byte >> 4) & 0x03
+        units = {
+            0: "mbar",
+            1: "Torr",
+            2: "Pa"
         }
+        return units.get(unit_bits, "unknown")
 
     def _parse_error_byte(self, error: int) -> Dict[str, bool]:
         """Parse error byte into dictionary of error flags"""
@@ -1786,6 +1859,7 @@ class OPGProtocol(GaugeProtocol):
 
         return {"success": True, "raw_data": data.hex()}
 
+
 def get_protocol(gauge_type: str, address: int = 254) -> GaugeProtocol:
     """Factory function to get appropriate protocol handler"""
     protocols = {
@@ -1797,6 +1871,7 @@ def get_protocol(gauge_type: str, address: int = 254) -> GaugeProtocol:
         "PPG570": PPGProtocol,
         "MAG500": MAGMPGProtocol,
         "MPG500": MAGMPGProtocol,
+        "TC600": TC600Protocol,  # Properly register TC600 protocol
         "OPG550": OPGProtocol,
         "BPG402": BPG40xProtocol,
         "BPG552": BPG552Protocol,
@@ -1808,4 +1883,333 @@ def get_protocol(gauge_type: str, address: int = 254) -> GaugeProtocol:
     if not protocol_class:
         raise ValueError(f"Unsupported gauge type: {gauge_type}")
 
+    # For TC600, we might need special handling of the address
+    if gauge_type == "TC600":
+        return protocol_class(address=1 if address == 254 else address)
+
     return protocol_class(address=address)
+
+
+class TC600CommandType(Enum):
+    """TC600 command types and parameter numbers"""
+    # Drive commands (0-99)
+    MOTOR_PUMP = 23  # Motor/pump on/off control
+    ROTATION_SPEED = 309  # Actual rotation speed (rpm)
+    SET_ROTATION = 308  # Set rotation speed
+    DRIVE_CURRENT = 310  # Actual drive current
+    TEMP_ELECTRONIC = 326  # Electronics temperature
+    TEMP_MOTOR = 330  # Motor temperature
+    TEMP_PUMP = 342  # Pump temperature
+    OPERATING_HOURS = 311  # Operating hours
+    POWER_CONSUMPTION = 316  # Power consumption
+
+    # Error/Warning Status (100-199)
+    ERROR_CODE = 303  # Current error code
+    ERROR_MESSAGE = 304  # Error message text
+    WARNING_CODE = 305  # Warning code
+    WARNING_MESSAGE = 306  # Warning message text
+
+    # Configuration (200-299)
+    STATION_NUMBER = 797  # Station number (RS485 address)
+    BAUD_RATE = 798  # Interface baud rate
+    INTERFACE_TYPE = 794  # Interface type (RS232/485)
+    FIRMWARE_VERSION = 312  # Firmware version
+    PUMP_TYPE = 369  # Pump type identification
+
+    # Operating Parameters (300-399)
+    RUN_UP_TIME = 700  # Maximum run-up time
+    VENT_MODE = 30  # Venting mode selection
+    GAS_MODE = 27  # Gas mode selection
+    SEALING_GAS = 31  # Sealing gas control
+    STANDBY_SPEED = 707  # Rotation speed in standby
+
+    # Status Information (400-499)
+    ROTATION_ACTIVE = 309  # Motor rotation status
+    ACCELERATION = 307  # Current acceleration
+    NORMAL_OPERATION = 305  # Normal operation status
+    DRIVE_POWER = 316  # Current drive power
+    SET_ROTATION_VAL = 308  # Set rotation speed value
+    MOTOR_CURRENT = 310  # Current motor current
+
+
+@dataclass
+class TC600Command:
+    """Command definition for TC600 parameters"""
+    number: int  # Parameter number
+    name: str  # Command name
+    description: str  # Command description
+    data_type: str  # Data type (u_integer, boolean, etc)
+    read: bool = True  # Supports read
+    write: bool = False  # Supports write
+
+class TC600Protocol(GaugeProtocol):
+    def __init__(self, address: int = 1, logger: Optional[logging.Logger] = None):
+        super().__init__(address, logger)
+        self.device_type = "TC600"
+        self.current_command = None
+
+    def _initialize_commands(self):
+        """Initialize all available TC600 commands with their parameters"""
+        self._command_defs = {
+            "motor_on": {
+                "pid": 23,
+                "desc": "Switch motor/pump on/off",
+                "type": "boolean_old",
+                "write": True,
+                "options": ["0", "1"],
+                "option_desc": ["Off", "On"]
+            },
+            "get_speed": {
+                "pid": 309,
+                "desc": "Get actual rotation speed (rpm)",
+                "type": "u_integer"
+            },
+            "set_speed": {
+                "pid": 308,
+                "desc": "Set rotation speed (percentage of nominal)",
+                "type": "u_integer",
+                "write": True,
+                "min": 0,
+                "max": 100,
+                "unit": "%",
+                "format": "percentage"  # Added format specifier
+            },
+            "get_current": {
+                "pid": 310,
+                "desc": "Get actual drive current",
+                "type": "u_real"
+            },
+            "get_temp_electronic": {
+                "pid": 326,
+                "desc": "Get electronics temperature",
+                "type": "u_integer"
+            },
+            "get_temp_motor": {
+                "pid": 330,
+                "desc": "Get motor temperature",
+                "type": "u_integer"
+            },
+            "get_temp_bearing": {
+                "pid": 342,
+                "desc": "Get bearing temperature",
+                "type": "u_integer"
+            },
+            "get_error": {
+                "pid": 303,
+                "desc": "Get current error code",
+                "type": "u_integer"
+            },
+            "get_warning": {
+                "pid": 305,
+                "desc": "Get warning status",
+                "type": "u_integer"
+            },
+            "operating_hours": {
+                "pid": 311,
+                "desc": "Get total operating hours",
+                "type": "u_integer"
+            },
+            "set_runup_time": {
+                "pid": 700,
+                "desc": "Set maximum run-up time",
+                "type": "u_integer",
+                "write": True,
+                "min": 1,
+                "max": 1200,
+                "unit": "seconds"
+            },
+            "standby_speed": {
+                "pid": 707,
+                "desc": "Set standby rotation speed",
+                "type": "u_integer",
+                "write": True,
+                "min": 1,
+                "max": 100,
+                "unit": "%"
+            },
+            "vent_mode": {
+                "pid": 30,
+                "desc": "Set venting valve mode",
+                "type": "u_integer",
+                "write": True,
+                "options": ["0", "1", "2"],
+                "option_desc": ["Closed", "Controlled", "Open"]
+            },
+            "vent_time": {
+                "pid": 721,
+                "desc": "Set venting time",
+                "type": "u_integer",
+                "write": True,
+                "min": 1,
+                "max": 3600,
+                "unit": "seconds"
+            }
+        }
+
+    def create_command(self, command: GaugeCommand) -> bytes:
+        """Create command bytes with improved validation and formatting"""
+        if command.name not in self._command_defs:
+            raise ValueError(f"Unknown command: {command.name}")
+
+        cmd_info = self._command_defs[command.name]
+        self.current_command = command.name
+
+        # Build command message
+        addr = f"{self.address:03d}"
+        action = "10" if command.command_type == "!" else "00"
+        param = f"{cmd_info['pid']:03d}"
+
+        if command.command_type == "!":
+            value = command.parameters.get('value', 0)
+
+            # Handle different value formats
+            if cmd_info.get("format") == "percentage":
+                try:
+                    value = int(value)
+                    if not (0 <= value <= 100):
+                        raise ValueError(f"Percentage must be between 0 and 100")
+                    # Format as 6-digit integer with leading zeros
+                    data_bytes = f"{value:06d}"
+                except ValueError as e:
+                    raise ValueError(f"Invalid percentage value: {str(e)}")
+            else:
+                data_bytes = self._encode_value(value, cmd_info['type'])
+
+            data_len = f"{len(data_bytes):02d}"
+            msg = f"{addr}{action}{param}{data_len}{data_bytes}"
+        else:
+            msg = f"{addr}{action}{param}02=?"
+
+        checksum = sum(msg.encode('ascii')) % 256
+        msg = f"{msg}{checksum:03d}\r"
+        cmd_bytes = msg.encode('ascii')
+
+        # Log debug info with improved clarity
+        decoded = (f"Command: {command.name} | "
+                   f"Address: {addr} | "
+                   f"Action: {'Write' if action == '10' else 'Read'} | "
+                   f"Parameter: {param} ({cmd_info['desc']})")
+
+        if command.command_type == "!":
+            decoded += f" | Value: {value}"
+
+        self.logger.debug(f"TX: {decoded}")
+        return cmd_bytes
+
+    def get_command_options(self, command_name: str) -> Optional[List[Tuple[str, str]]]:
+        """Get available options for a command parameter if applicable"""
+        if command_name not in self._command_defs:
+            return None
+
+        cmd_info = self._command_defs[command_name]
+
+        # Return options if defined
+        if "options" in cmd_info:
+            return list(zip(cmd_info["options"], cmd_info["option_desc"]))
+
+        # Return range description if min/max defined
+        elif "min" in cmd_info and "max" in cmd_info:
+            return [(str(cmd_info["min"]), f"Min ({cmd_info['unit']})"),
+                    (str(cmd_info["max"]), f"Max ({cmd_info['unit']})")]
+
+        return None
+
+    def parse_response(self, response: bytes) -> GaugeResponse:
+        """Parse response with properly decoded debug output"""
+        try:
+            resp_str = response.decode('ascii').strip()
+
+            # Decode response parts
+            addr = resp_str[0:3]
+            action = resp_str[3:5]
+            param = resp_str[5:8]
+            data = resp_str[10:-4] if len(resp_str) > 12 else ""
+
+            # Human readable version
+            cmd_info = next((v for k, v in self._command_defs.items()
+                             if str(v['pid']).zfill(3) == param), None)
+
+            decoded = (f"Response | "
+                       f"Address: {addr} | "
+                       f"Action: {'Write' if action == '10' else 'Read'} | "
+                       f"Parameter: {param} "
+                       f"({cmd_info['desc'] if cmd_info else 'Unknown'}) | "
+                       f"Data: {self._format_response_data(data)}")
+
+            self.logger.debug(f"RX: {decoded}")
+
+            # Rest of response parsing...
+            if "NO_DEF" in resp_str:
+                return GaugeResponse(
+                    raw_data=response,
+                    formatted_data="Parameter does not exist",
+                    success=False,
+                    error_message="Invalid parameter"
+                )
+
+            if "_RANGE" in resp_str:
+                return GaugeResponse(
+                    raw_data=response,
+                    formatted_data="Value out of range",
+                    success=False,
+                    error_message="Value out of valid range"
+                )
+
+            if "_LOGIC" in resp_str:
+                return GaugeResponse(
+                    raw_data=response,
+                    formatted_data="Logic error",
+                    success=False,
+                    error_message="Command logic error"
+                )
+
+            formatted_data = self._format_response_data(data)
+            return GaugeResponse(
+                raw_data=response,
+                formatted_data=formatted_data,
+                success=True,
+                error_message=None
+            )
+
+        except Exception as e:
+            return GaugeResponse(
+                raw_data=response,
+                formatted_data="",
+                success=False,
+                error_message=f"Parse error: {str(e)}"
+            )
+
+    def test_commands(self) -> List[bytes]:
+        """Return test commands for connection testing"""
+        return [
+            self.create_command(GaugeCommand(name="get_speed", command_type="?")),
+            self.create_command(GaugeCommand(name="get_error", command_type="?"))
+        ]
+
+    def _encode_value(self, value: Any, data_type: str) -> str:
+        """Encode value based on data type"""
+        if data_type == "boolean_old":
+            return "111111" if value else "000000"
+        elif data_type == "u_integer":
+            return f"{int(value):06d}"
+        elif data_type == "u_real":
+            fixed = int(float(value) * 100)
+            return f"{fixed:06d}"
+        else:
+            raise ValueError(f"Unsupported data type: {data_type}")
+
+    def _format_response_data(self, data: str) -> str:
+        """Format response data based on parameter type"""
+        try:
+            if not data or data.isspace():
+                return "No data"
+
+            if len(data) == 6 and all(c in '01' for c in data):
+                return "On" if data == "111111" else "Off"
+            elif data.isdigit():
+                return f"{int(data)} RPM" if self.current_command == "get_speed" else data
+
+            return data
+
+        except Exception:
+            return data

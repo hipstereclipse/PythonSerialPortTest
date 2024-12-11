@@ -1,0 +1,4 @@
+[2024-10-28 12:32:05] Command entered: @254PN?\
+[2024-10-28 12:32:05] Sent command: @254PN?\
+[2024-10-28 12:32:19] Command entered: @254PN?\
+[2024-10-28 12:32:19] Sent command: @254PN?\
