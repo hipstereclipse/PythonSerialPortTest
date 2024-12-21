@@ -1,0 +1,236 @@
+"""
+CommandFrame: Handles gauge commands - both quick commands and detailed command construction.
+"""
+
+import tkinter as tk
+from tkinter import ttk
+from typing import Callable
+
+from serial_communication.communicator.intelligent_command_sender import IntelligentCommandSender
+from serial_communication.config import GAUGE_PARAMETERS
+from serial_communication.models import GaugeResponse, GaugeCommand
+
+
+class CommandFrame(ttk.LabelFrame):
+    """
+    Frame for handling gauge commands - both quick commands and detailed command construction.
+    """
+
+    def __init__(self, parent, gauge_var: tk.StringVar, command_callback: Callable):
+        """Initialize command frame with gauge selection and callback."""
+        super().__init__(parent, text="Commands")
+
+        # Store references to parent variables and callback
+        self.gauge_var = gauge_var
+        self.command_callback = command_callback
+        self.communicator = None  # Will be set by main application
+
+        # Initialize internal state variables
+        self.cmd_var = tk.StringVar()
+        self.cmd_type = tk.StringVar(value="?")
+        self.param_var = tk.StringVar()
+        self.desc_var = tk.StringVar()
+
+        # Create GUI elements
+        self._create_widgets()
+
+        # Trace changes
+        self.gauge_var.trace('w', self._update_commands)
+        self.cmd_var.trace('w', self._update_command_info)
+        self.cmd_type.trace('w', self._update_parameter_state)
+
+    def _create_widgets(self):
+        """Creates the manual command section and the quick commands section."""
+        # Manual Command Section
+        manual_frame = ttk.LabelFrame(self, text="Manual Command")
+        manual_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        ttk.Label(manual_frame, text="Command:").pack(side=tk.LEFT, padx=5)
+        self.manual_cmd_entry = ttk.Entry(manual_frame, width=50)
+        self.manual_cmd_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        self.manual_send_button = ttk.Button(
+            manual_frame,
+            text="Send",
+            command=self.send_manual_command
+        )
+        self.manual_send_button.pack(side=tk.LEFT, padx=5)
+
+        # Quick Commands Section
+        quick_frame = ttk.LabelFrame(self, text="Quick Commands")
+        quick_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        ttk.Label(quick_frame, text="Command:").pack(side=tk.LEFT, padx=5)
+        self.cmd_combo = ttk.Combobox(
+            quick_frame,
+            textvariable=self.cmd_var,
+            state="readonly",
+            width=30
+        )
+        self.cmd_combo.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+
+        radio_frame = ttk.Frame(quick_frame)
+        radio_frame.pack(side=tk.LEFT, padx=5)
+
+        self.query_radio = ttk.Radiobutton(
+            radio_frame,
+            text="Query (?)",
+            variable=self.cmd_type,
+            value="?"
+        )
+        self.set_radio = ttk.Radiobutton(
+            radio_frame,
+            text="Set (!)",
+            variable=self.cmd_type,
+            value="!"
+        )
+        self.query_radio.pack(side=tk.LEFT, padx=5)
+        self.set_radio.pack(side=tk.LEFT, padx=5)
+
+        # Parameter frame
+        param_frame = ttk.Frame(self)
+        param_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        self.param_label = ttk.Label(param_frame, text="Parameter:")
+        self.param_label.pack(side=tk.LEFT, padx=5)
+
+        self.param_entry = ttk.Entry(param_frame, textvariable=self.param_var, width=30)
+        self.param_combo = ttk.Combobox(param_frame, textvariable=self.param_var, state="readonly", width=30)
+
+        self.quick_send_button = ttk.Button(param_frame, text="Send", command=self.send_quick_command)
+        self.quick_send_button.pack(side=tk.RIGHT, padx=5)
+
+        # Description label
+        self.desc_label = ttk.Label(self, textvariable=self.desc_var, wraplength=500)
+        self.desc_label.pack(fill=tk.X, padx=5, pady=5)
+
+    def _update_commands(self, *args):
+        """
+        Updates the combo box with commands for the currently selected gauge type.
+        """
+        gauge_type = self.gauge_var.get()
+        if gauge_type in GAUGE_PARAMETERS:
+            commands = GAUGE_PARAMETERS[gauge_type].get("commands", {})
+            cmd_list = [f"{name} - {cmd_info['desc']}" for name, cmd_info in commands.items()]
+            self.cmd_combo['values'] = cmd_list
+            if cmd_list:
+                self.cmd_combo.set(cmd_list[0])
+                self._update_command_info()
+
+    def _update_command_info(self, *args):
+        """
+        Updates description and sets radio buttons to read-only if the command is read-only.
+        """
+        selected = self.cmd_var.get()
+        if selected and self.communicator:
+            cmd_name = selected.split(" - ")[0]
+            cmd_info = self.communicator.protocol._command_defs.get(cmd_name, {})
+
+            self.desc_var.set(cmd_info.get("desc", "No description available"))
+
+            if cmd_info.get("write", False):
+                self.query_radio.configure(state="normal")
+                self.set_radio.configure(state="normal")
+            else:
+                self.cmd_type.set("?")
+                self.query_radio.configure(state="normal")
+                self.set_radio.configure(state="disabled")
+
+            self._update_parameter_state()
+
+    def send_manual_command(self):
+        """
+        Sends the raw manual command typed by the user.
+        """
+        if not self.communicator:
+            return
+
+        cmd = self.manual_cmd_entry.get().strip()
+        if cmd:
+            result = IntelligentCommandSender.send_manual_command(self.communicator, cmd)
+            self.manual_cmd_entry.delete(0, tk.END)
+
+            if self.command_callback:
+                response = GaugeResponse(
+                    raw_data=bytes.fromhex(result.get('response_raw', '')) if result.get('response_raw') else b'',
+                    formatted_data=result.get('response_formatted', ''),
+                    success=result.get('success', False),
+                    error_message=result.get('error', None)
+                )
+                self.command_callback(cmd, response=response)
+
+    def _update_parameter_state(self, *args):
+        """
+        Shows or hides parameter entry widgets depending on whether the command is a write.
+        """
+        if not self.communicator or not self.cmd_var.get():
+            return
+
+        cmd_name = self.cmd_var.get().split(" - ")[0]
+        cmd_info = self.communicator.protocol._command_defs.get(cmd_name, {})
+
+        self.param_entry.pack_forget()
+        self.param_combo.pack_forget()
+
+        if self.cmd_type.get() == "!":
+            self.param_label.configure(state="normal")
+            if "options" in cmd_info:
+                options = [f"{val} - {desc}" for val, desc in zip(cmd_info["options"], cmd_info["option_desc"])]
+                self.param_combo['values'] = options
+                self.param_combo.set(options[0] if options else "")
+                self.param_combo.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+                self.param_combo.configure(state="readonly")
+            else:
+                self.param_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
+                self.param_entry.configure(state="normal")
+                if "min" in cmd_info and "max" in cmd_info:
+                    self.desc_var.set(
+                        f"{cmd_info['desc']} (Range: {cmd_info['min']}-{cmd_info['max']} {cmd_info.get('unit', '')})"
+                    )
+        else:
+            self.param_label.configure(state="disabled")
+            self.param_var.set("")
+
+    def send_quick_command(self):
+        """
+        Sends a quick command constructed from the GUI controls.
+        """
+        if not self.communicator:
+            return
+
+        selected = self.cmd_var.get()
+        if selected:
+            cmd_name = selected.split(" - ")[0]
+            param_value = self.param_var.get()
+            if " - " in param_value:
+                param_value = param_value.split(" - ")[0]
+
+            command = GaugeCommand(
+                name=cmd_name,
+                command_type=self.cmd_type.get(),
+                parameters={"value": param_value} if self.cmd_type.get() == "!" else None
+            )
+
+            response = self.communicator.send_command(command)
+            if self.command_callback:
+                self.command_callback(cmd_name, response=response)
+
+    def set_enabled(self, enabled: bool):
+        """
+        Enables or disables all relevant widgets in the frame.
+        """
+        state = "normal" if enabled else "disabled"
+        widgets = [
+            self.manual_cmd_entry,
+            self.manual_send_button,
+            self.cmd_combo,
+            self.query_radio,
+            self.set_radio,
+            self.param_entry,
+            self.quick_send_button
+        ]
+        for widget in widgets:
+            widget.configure(state=state)
+
+        if enabled:
+            self._update_command_info()
