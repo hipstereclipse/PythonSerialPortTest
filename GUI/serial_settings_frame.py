@@ -15,36 +15,50 @@ class SerialSettingsFrame(ttk.LabelFrame):
 
     def __init__(self, parent, settings_callback: Callable, command_callback: Callable):
         """
-        Initialize the SerialSettingsFrame with callbacks for settings changes and manual commands.
+        Initializes the SerialSettingsFrame with callbacks for:
+         - settings changes (settings_callback)
+         - manual commands (command_callback)
         """
         super().__init__(parent, text="Serial Settings & Manual Command")
 
         self.settings_callback = settings_callback
         self.command_callback = command_callback
-        self.logger = None
+        self.logger = None  # Will be set using set_logger()
 
+        # Holds the user-selected baud rate
         self.baud_var = tk.StringVar(value="9600")
+        # Holds the number of data bits
         self.bytesize_var = tk.StringVar(value="8")
+        # Holds the parity setting
         self.parity_var = tk.StringVar(value="N")
+        # Holds the stop bits
         self.stopbits_var = tk.StringVar(value="1")
+        # Tracks if RS485 mode is enabled
         self.rs485_mode = tk.BooleanVar(value=False)
+        # Holds the RS485 address if in RS485 mode
         self.rs485_addr = tk.StringVar(value="254")
 
+        # A simple list to store manual command history (not fully implemented)
         self.cmd_history = []
         self.history_index = -1
 
+        # Builds the frame's widgets
         self._create_widgets()
 
     def set_logger(self, logger):
-        """Assigns a logger instance."""
+        """
+        Assigns a logger instance for writing logs if needed.
+        """
         self.logger = logger
 
     def _create_widgets(self):
-        """Creates all widgets in the serial settings frame."""
+        """
+        Creates all widgets for serial settings in a single row.
+        """
         settings_frame = ttk.Frame(self)
         settings_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # Left Side: Basic Serial Settings
+        # Left side: basic serial settings
         left_frame = ttk.Frame(settings_frame)
         left_frame.pack(side=tk.LEFT, padx=5)
 
@@ -66,7 +80,7 @@ class SerialSettingsFrame(ttk.LabelFrame):
         )
         bytesize_menu.pack(side=tk.LEFT, padx=2)
 
-        # Center: Parity and Stop Bits
+        # Center: parity and stop bits
         center_frame = ttk.Frame(settings_frame)
         center_frame.pack(side=tk.LEFT, padx=5)
 
@@ -88,7 +102,7 @@ class SerialSettingsFrame(ttk.LabelFrame):
         )
         stopbits_menu.pack(side=tk.LEFT, padx=2)
 
-        # Right Side: RS485 Settings
+        # Right side: RS485 settings
         right_frame = ttk.Frame(settings_frame)
         right_frame.pack(side=tk.LEFT, padx=5)
 
@@ -107,23 +121,32 @@ class SerialSettingsFrame(ttk.LabelFrame):
         self.rs485_addr_entry = ttk.Entry(rs485_frame, textvariable=self.rs485_addr, width=4)
         self.rs485_addr_entry.pack(side=tk.LEFT, padx=2)
 
+        # A button to apply these settings
         ttk.Button(right_frame, text="Apply", command=self.apply_settings, width=8).pack(side=tk.LEFT, padx=5)
 
+        # Reflects whether the RS485 address is enabled/disabled
         self._update_rs485_address_state()
 
     def _update_rs485_address_state(self):
-        """Enables or disables RS485 address entry based on RS485 mode."""
+        """
+        Enables or disables RS485 address entry depending on RS485 mode.
+        """
         state = 'normal' if self.rs485_mode.get() else 'disabled'
         self.rs485_addr_entry.configure(state=state)
 
     def _on_rs485_change(self):
-        """Handles RS485 mode toggle."""
+        """
+        Called when the user toggles the "RS485" checkbox.
+        Updates the UI and calls the settings callback.
+        """
         self._update_rs485_address_state()
         settings = self.get_current_settings()
         self.settings_callback(settings)
 
     def get_current_settings(self) -> dict:
-        """Returns the current serial settings in a dict."""
+        """
+        Returns the current user-selected serial settings in dictionary form.
+        """
         return {
             'baudrate': int(self.baud_var.get()),
             'bytesize': int(self.bytesize_var.get()),
@@ -134,10 +157,13 @@ class SerialSettingsFrame(ttk.LabelFrame):
         }
 
     def apply_settings(self):
-        """Applies all serial settings by calling the settings callback."""
+        """
+        Called when the user clicks "Apply" to confirm the new serial settings.
+        """
         settings = self.get_current_settings()
         self.settings_callback(settings)
 
+        # Logs a message listing the new settings
         settings_msg = (
             f"\nSerial settings applied:\n"
             f"Baud Rate: {settings['baudrate']}\n"
@@ -156,22 +182,21 @@ class SerialSettingsFrame(ttk.LabelFrame):
         if self.logger:
             self.logger.info(settings_msg)
 
-    # Example placeholders for manual command entry if needed:
-    def send_command(self, event=None):
-        """Send a manual command from some entry field (if you had one)."""
-        pass
-
-    def history_up(self, event):
-        """Go up in command history."""
-        pass
-
-    def history_down(self, event):
-        """Go down in command history."""
-        pass
-
     def set_rs485_mode(self, enabled: bool, address: int = 254):
-        """Enable or disable RS485 mode and set address."""
+        """
+        Enables or disables RS485 mode externally, e.g. when switching gauges.
+        """
         self.rs485_mode.set(enabled)
         self.rs485_addr.set(str(address))
         self._update_rs485_address_state()
         self._on_rs485_change()
+
+    # Placeholder methods for manual command entry (if needed).
+    def send_command(self, event=None):
+        pass
+
+    def history_up(self, event):
+        pass
+
+    def history_down(self, event):
+        pass
