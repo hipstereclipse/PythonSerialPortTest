@@ -88,12 +88,31 @@ class GaugeCommunicator:
                 write_timeout=self.write_timeout
             )
             self.set_rs_mode(self.rs_mode)
-            return self.test_connection()
+
+            # Disable strict validation for initial test
+            self.disable_validation()
+            connection_result = self.test_connection()
+
+            if connection_result:
+                # Enable strict validation after successful connection
+                self.enable_validation()
+
+            return connection_result
 
         except Exception as e:
             self.logger.error(f"Connection failed: {str(e)}")
             self.disconnect()
             return False
+
+    def enable_validation(self):
+        """Enable strict protocol validation."""
+        if hasattr(self.protocol, 'enable_validation'):
+            self.protocol.enable_validation()
+
+    def disable_validation(self):
+        """Disable strict protocol validation."""
+        if hasattr(self.protocol, 'disable_validation'):
+            self.protocol.disable_validation()
 
     def disconnect(self) -> bool:
         """Close the serial connection, if open."""
@@ -187,6 +206,10 @@ class GaugeCommunicator:
             self.logger.error(f"Command failed: {str(e)}")
             return GaugeResponse(raw_data=b"", success=False, error_message=str(e), formatted_data="")
 
+    """
+    Updated read_response method for GaugeCommunicator to avoid duplicate logging.
+    """
+
     def read_response(self) -> Optional[bytes]:
         """Reads a response from the gauge based on gauge type or continuous modes."""
         if not self.ser:
@@ -200,12 +223,47 @@ class GaugeCommunicator:
             else:
                 response = self._read_available()
 
+            # Log the response only once and only if we actually received something
             if response:
-                self.logger.debug(f"Received response: {self.format_response(response)}")
+                formatted_resp = self.format_response(response)
+                self.logger.debug(f"Received response: {formatted_resp}")
+
             return response
         except Exception as e:
             self.logger.error(f"Read failed: {str(e)}")
             return None
+
+    def test_connection(self) -> bool:
+        """Test connection using the protocol's test commands."""
+        if not self.ser or not self.ser.is_open:
+            self.logger.error("Not connected")
+            return False
+
+        try:
+            current_format = self.output_format
+            self.logger.debug(f"Testing connection using {current_format} format")
+
+            for cmd_bytes in self.protocol.test_commands():
+                self.ser.reset_input_buffer()
+                self.ser.reset_output_buffer()
+
+                formatted_cmd = self.format_response(cmd_bytes)
+                self.logger.debug(f"Testing command: {formatted_cmd}")
+
+                self.ser.write(cmd_bytes)
+                self.ser.flush()
+                response = self.read_response()  # Response will be logged in read_response
+
+                if response:
+                    return True
+                else:
+                    self.logger.debug("No response received")
+
+            return False
+
+        except Exception as e:
+            self.logger.error(f"Connection test failed: {str(e)}")
+            return False
 
     def _read_with_frame_sync(self, sync_byte: int, frame_size: int) -> Optional[bytes]:
         """Read a fixed-size frame that starts with a specific sync byte."""

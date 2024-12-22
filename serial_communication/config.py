@@ -117,6 +117,55 @@ GAUGE_PARAMETERS = {
             "pirani_adjust": {"pid": 418, "cmd": 3, "desc": "Execute Pirani adjustment"}
         }
     },
+"BCG450": {
+    "baudrate": 57600,
+    "device_id": 0x0B,
+    "commands": {
+        "pressure": {
+            "pid": 221,
+            "cmd": 1,
+            "desc": "Read pressure (LogFixs32en26)"
+        },
+        "temperature": {
+            "pid": 222,
+            "cmd": 1,
+            "desc": "Read temperature"
+        },
+        "sensor_status": {
+            "pid": 223,
+            "cmd": 1,
+            "desc": "Get active sensor status"
+        },
+        "serial_number": {
+            "pid": 207,
+            "cmd": 1,
+            "desc": "Read serial number"
+        },
+        "software_version": {
+            "pid": 218,
+            "cmd": 1,
+            "desc": "Read software version"
+        },
+        "error_status": {
+            "pid": 228,
+            "cmd": 1,
+            "desc": "Read error status"
+        },
+        "pirani_adjust": {
+            "pid": 418,
+            "cmd": 3,
+            "desc": "Execute Pirani adjustment"
+        },
+        "ba_degas": {
+            "pid": 529,
+            "cmd": 3,
+            "desc": "Control BA degas"
+        }
+    },
+    "rs_modes": ["RS232", "RS485"],  # Supports both interfaces
+    "timeout": 1.0,
+    "write_timeout": 1.0
+    },
     "CDG025D": {
         "baudrate": 9600,
         "bytesize": serial.EIGHTBITS,

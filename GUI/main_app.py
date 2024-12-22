@@ -21,7 +21,6 @@ from .command_frame import CommandFrame
 from .debug_frame import DebugFrame
 from .output_frame import OutputFrame
 
-
 class GaugeApplication:
     """
     Main application class for the vacuum gauge communication interface.
@@ -58,43 +57,97 @@ class GaugeApplication:
 
         self.refresh_ports()
 
+    """
+    Enhanced initialization for the Gauge Application with proper gauge type handling.
+    """
+
     def _create_gui(self):
+        """Creates the main GUI elements with proper gauge initialization."""
+        # Create connection frame
         conn_frame = ttk.LabelFrame(self.root, text="Connection")
         conn_frame.pack(fill=tk.X, padx=5, pady=5)
 
+        # Port selection
         ttk.Label(conn_frame, text="Port:").pack(side=tk.LEFT, padx=5)
         self.port_menu = ttk.OptionMenu(conn_frame, self.selected_port, "")
         self.port_menu.pack(side=tk.LEFT, padx=5)
 
         ttk.Button(conn_frame, text="Refresh", command=self.refresh_ports).pack(side=tk.LEFT, padx=5)
 
-        ttk.Label(conn_frame, text="Gauge:").pack(side=tk.LEFT, padx=5)
-        self.gauge_menu = ttk.OptionMenu(
-            conn_frame,
-            self.selected_gauge,
-            "PCG550",
-            *GAUGE_PARAMETERS.keys()
-        )
-        self.gauge_menu.pack(side=tk.LEFT, padx=5)
+        # Gauge selection - Group gauges by type
+        gauge_groups = {
+            "Capacitive": ["CDG025D", "CDG045D"],
+            "Pirani/Capacitive": ["PCG550", "PSG550"],
+            "MEMS Pirani": ["PPG550", "PPG570"],
+            "Cold Cathode": ["MAG500", "MPG500"],
+            "Hot Cathode": ["BPG40x", "BPG552"],
+            "Combination": ["BCG450", "BCG552"],
+            "Turbo Controller": ["TC600"]
+        }
 
-        self.connect_button = ttk.Button(conn_frame, text="Connect", command=self.connect_disconnect)
+        ttk.Label(conn_frame, text="Gauge:").pack(side=tk.LEFT, padx=5)
+
+        # Create a combobox instead of OptionMenu for better organization
+        gauge_list = []
+        for group, gauges in gauge_groups.items():
+            gauge_list.extend(gauges)
+
+        self.gauge_combo = ttk.Combobox(
+            conn_frame,
+            textvariable=self.selected_gauge,
+            values=gauge_list,
+            state="readonly",
+            width=20
+        )
+        self.gauge_combo.pack(side=tk.LEFT, padx=5)
+
+        # Set default gauge
+        if gauge_list:
+            self.selected_gauge.set(gauge_list[0])
+
+        self.connect_button = ttk.Button(
+            conn_frame,
+            text="Connect",
+            command=self.connect_disconnect
+        )
         self.connect_button.pack(side=tk.LEFT, padx=5)
 
-        # Create frames
-        self.serial_frame = SerialSettingsFrame(self.root, self.apply_serial_settings, self.send_manual_command)
+        # Create other frames
+        self.serial_frame = SerialSettingsFrame(
+            self.root,
+            self.apply_serial_settings,
+            self.send_manual_command
+        )
         self.serial_frame.set_logger(self)
         self.serial_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        self.cmd_frame = CommandFrame(self.root, self.selected_gauge, self.send_command)
+        self.cmd_frame = CommandFrame(
+            self.root,
+            self.selected_gauge,
+            self.send_command
+        )
         self.cmd_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        self.debug_frame = DebugFrame(self.root, self.try_all_baud_rates, self.send_enq, self.show_port_settings, self.output_format)
+        self.debug_frame = DebugFrame(
+            self.root,
+            self.try_all_baud_rates,
+            self.send_enq,
+            self.show_port_settings,
+            self.output_format
+        )
         self.debug_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        self.output_frame = OutputFrame(self.root, self.output_format)
+        self.output_frame = OutputFrame(
+            self.root,
+            self.output_format
+        )
         self.output_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        self.continuous_frame = ttk.LabelFrame(self.root, text="Continuous Reading")
+        # Create continuous reading frame
+        self.continuous_frame = ttk.LabelFrame(
+            self.root,
+            text="Continuous Reading"
+        )
 
         ttk.Checkbutton(
             self.continuous_frame,
@@ -103,12 +156,25 @@ class GaugeApplication:
             command=self.toggle_continuous_reading
         ).pack(side=tk.LEFT, padx=5)
 
-        ttk.Label(self.continuous_frame, text="Update Interval (ms):").pack(side=tk.LEFT, padx=5)
-        ttk.Entry(self.continuous_frame, textvariable=self.update_interval, width=6).pack(side=tk.LEFT, padx=5)
+        ttk.Label(
+            self.continuous_frame,
+            text="Update Interval (ms):"
+        ).pack(side=tk.LEFT, padx=5)
 
-        ttk.Button(self.continuous_frame, text="Update", command=self._update_interval_value).pack(side=tk.LEFT, padx=5)
+        ttk.Entry(
+            self.continuous_frame,
+            textvariable=self.update_interval,
+            width=6
+        ).pack(side=tk.LEFT, padx=5)
 
-        self.update_gui()  # Start GUI update loop
+        ttk.Button(
+            self.continuous_frame,
+            text="Update",
+            command=self._update_interval_value
+        ).pack(side=tk.LEFT, padx=5)
+
+        # Initialize state
+        self.update_gui()
 
     def update_gui(self):
         while not self.response_queue.empty():
