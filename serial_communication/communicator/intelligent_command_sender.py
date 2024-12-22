@@ -1,264 +1,203 @@
 """
-gauge_tester.py
-Provides the GaugeTester class for testing gauge connections, baud rates, and ENQ commands.
-This class helps systematically validate communication with a gauge.
+intelligent_command_sender.py
+Contains the IntelligentCommandSender class for parsing user-supplied strings
+and sending them as manual commands in the correct format (hex, decimal, ascii, etc.).
 """
 
-import time            # Imports time for sleeps between attempts
-from typing import Optional
+import time             # Used for small delays if needed
+from typing import Dict, Any
 
-from ..models import GaugeCommand, GaugeResponse    # Imports standardized data models
-from ..config import GAUGE_PARAMETERS              # Imports gauge parameters from config
-from .gauge_communicator import GaugeCommunicator  # Imports the main communicator class
-from .intelligent_command_sender import IntelligentCommandSender
+# Imports a global list of potential output formats if needed
+from ..config import OUTPUT_FORMATS
 
 
-class GaugeTester:
+class IntelligentCommandSender:
     """
-    Handles gauge testing functionality:
-     - Attempting different baud rates
-     - Running quick tests to verify connectivity
-     - Sending ENQ (enquiry) to see if gauge responds
+    Handles detection of a user’s input string format (hex, decimal, binary, etc.)
+    and automatically converts it into bytes to write on the serial port.
     """
 
-    def __init__(self, communicator: GaugeCommunicator, logger):
+    @staticmethod
+    def detect_format(input_string: str) -> tuple[str, str]:
         """
-        Initializes the tester with a given communicator and logger.
-         - communicator: A GaugeCommunicator instance already created
-         - logger: A logging interface for messages
+        Determines the format of the user input command (binary, hex, decimal, ascii).
+        Returns a tuple: (format_type, normalized_string).
         """
-        self.communicator = communicator
-        self.logger = logger
-        self.gauge_type = communicator.gauge_type
-        # Looks up parameters for the chosen gauge
-        self.params = GAUGE_PARAMETERS[self.gauge_type]
-        # Protocol reference to send/parse commands
-        self.protocol = communicator.protocol
-        # Prepares a dictionary of short commands for testing
-        self.test_commands = self._get_test_commands()
+        # Strips whitespace
+        input_string = input_string.strip()
 
-    def _get_test_commands(self) -> dict:
-        """
-        Returns a dictionary of minimal commands to try on the connected gauge.
-        This can vary by gauge type.
-        """
-        commands = {}
-        # A handful of Pfeiffer gauges share some common PIDs for product_name, software_version, etc.
-        if self.gauge_type in ["PCG550", "PSG550", "MAG500", "MPG500"]:
-            commands.update({
-                "product_name": {"pid": 208, "cmd": 1, "desc": "Read product name"},
-                "software_version": {"pid": 218, "cmd": 1, "desc": "Read software version"},
-                "serial_number": {"pid": 207, "cmd": 1, "desc": "Read serial number"},
-            })
-        elif self.gauge_type == "PPG550":
-            commands.update({
-                "product_name": {"cmd": "PRD", "type": "read"},
-                "software_version": {"cmd": "SWV", "type": "read"},
-                "serial_number": {"cmd": "SER", "type": "read"},
-            })
-        elif self.gauge_type == "CDG045D":
-            commands.update({
-                "software_version": {"cmd": "read", "name": "software_version"},
-                "unit": {"cmd": "read", "name": "unit"},
-                "gauge_type": {"cmd": "read", "name": "cdg_type"},
-            })
-        # Additional commands can be appended as needed
-        return commands
+        # Checks if it might be binary (only '0' or '1' with optional spaces)
+        if all(c in '01 ' for c in input_string):
+            return "binary", input_string.replace(" ", "")
 
-    def test_connection(self) -> bool:
-        """
-        Performs a basic connection test by sending the gauge protocol's 'test commands'.
-        If the gauge responds properly, returns True.
-        """
-        if not self.communicator.ser or not self.communicator.ser.is_open:
-            # Logs if we are not connected at all
-            return False
+        # Checks for '0x' hex prefix
+        if input_string.lower().startswith('0x') or ' 0x' in input_string.lower():
+            return "hex_prefixed", input_string.lower().replace("0x", "").replace(" ", "")
 
+        # Checks for '\x' style escaped hex
+        if '\\x' in input_string:
+            return "hex_escaped", input_string.replace("\\x", "").replace(" ", "")
+
+        # Checks for space-separated decimals
+        if all(part.isdigit() for part in input_string.split()):
+            return "decimal", input_string
+
+        # Checks for comma-separated decimals
+        if ',' in input_string and all(part.strip().isdigit() for part in input_string.split(',')):
+            return "decimal_csv", input_string
+
+        # If all else fails, tries to interpret as plain hex (no prefix) if it’s valid
+        if all(c in '0123456789ABCDEFabcdef ' for c in input_string):
+            return "hex", input_string.replace(" ", "")
+
+        # Otherwise, treat as ASCII
+        return "ascii", input_string
+
+    @staticmethod
+    def convert_to_bytes(format_type: str, input_string: str) -> bytes:
+        """
+        Converts the normalized string to actual bytes based on the detected format.
+        """
         try:
-            # Grabs the protocol’s test commands
-            for cmd_bytes in self.communicator.protocol.test_commands():
-                # Translates the command to a readable format
-                formatted_cmd = self.communicator.format_response(cmd_bytes)
-                # Logs it for debug
-                self.logger.debug(f"Testing connection with command: {formatted_cmd}")
+            if format_type == "binary":
+                # Ensures we have multiples of 8
+                while len(input_string) % 8 != 0:
+                    input_string += '0'
+                # Groups bits into bytes
+                return bytes(int(input_string[i:i + 8], 2) for i in range(0, len(input_string), 8))
 
-                # Uses IntelligentCommandSender to send the bytes
-                result = IntelligentCommandSender.send_manual_command(
-                    self.communicator,
-                    cmd_bytes.hex(' '),
-                    self.communicator.output_format
-                )
+            elif format_type in ["hex", "hex_prefixed", "hex_escaped"]:
+                # Interprets the string as hex
+                return bytes.fromhex(input_string)
 
-                if result["success"]:
-                    # If we have a formatted response, logs it
-                    if "response_formatted" in result:
-                        self.logger.debug(f"Test response: {result['response_formatted']}")
-                        return True
-                    else:
-                        # If no formatted data was returned, logs a note
-                        self.logger.debug("Test response missing formatted data")
+            elif format_type in ["decimal", "decimal_csv"]:
+                # Splits on commas or spaces
+                if ',' in input_string:
+                    numbers = [int(x.strip()) for x in input_string.split(',')]
                 else:
-                    self.logger.debug(f"Test command failed: {result.get('error', 'Unknown error')}")
-            return False
+                    numbers = [int(x) for x in input_string.split()]
+                # Packs them as bytes
+                return bytes(numbers)
 
-        except Exception as e:
-            self.logger.error(f"Connection test failed: {str(e)}")
-            return False
+            elif format_type == "ascii":
+                # Directly encodes as ASCII
+                return input_string.encode('ascii')
 
-    def try_all_baud_rates(self, port: str) -> bool:
-        """
-        Cycles through a list of candidate baud rates, trying to connect at each.
-        Returns True if any baud rate yields a successful connection test.
-        """
-        from ..config import BAUD_RATES  # Imports a global list of common baud rates
-
-        # Builds a short list of baud rates to attempt, starting with the gauge’s default
-        baud_rates = [
-            self.params.get("baudrate", 9600),
-            57600, 38400, 19200, 9600
-        ]
-        # Removes duplicates while preserving order by converting to dict then back to list
-        baud_rates = list(dict.fromkeys(baud_rates))
-
-        self.logger.info("\n=== Testing Baud Rates ===")
-
-        # Tries each baud in sequence
-        for baud in baud_rates:
-            self.logger.info(f"\nTrying baud rate: {baud}")
-            try:
-                # Creates a temporary communicator for each attempt
-                temp_communicator = GaugeCommunicator(
-                    port=port,
-                    gauge_type=self.gauge_type,
-                    logger=self.logger
-                )
-                temp_communicator.baudrate = baud
-
-                # Connects and runs a quick connection test
-                if temp_communicator.connect():
-                    # If connected, calls test_connection
-                    if self.test_connection():
-                        self.logger.info(f"Successfully connected at {baud} baud!")
-                        temp_communicator.disconnect()
-                        return True
-                    else:
-                        self.logger.debug(f"Connection test failed at {baud} baud")
-                # Closes the port if open
-                if temp_communicator.ser and temp_communicator.ser.is_open:
-                    temp_communicator.disconnect()
-
-            except Exception as e:
-                self.logger.error(f"Failed at {baud} baud: {str(e)}")
-
-            # Waits a brief moment before next attempt
-            time.sleep(0.5)
-
-        self.logger.info("\nFailed to connect at any baud rate")
-        return False
-
-    def send_enq(self) -> bool:
-        """
-        Sends an ENQ (ASCII 0x05) to see if the gauge acknowledges.
-        Some gauges respond with an ACK, some with version info, or might do nothing.
-        Returns True if a positive response is received, else False.
-        """
-        if not self.communicator.ser or not self.communicator.ser.is_open:
-            self.logger.error("Not connected")
-            return False
-
-        try:
-            # Clears buffers to ensure a fresh read
-            self.communicator.ser.reset_input_buffer()
-            self.communicator.ser.reset_output_buffer()
-
-            self.logger.debug("> Sending ENQ (0x05)")
-
-            # Sends manual command with "05" as hex
-            result = IntelligentCommandSender.send_manual_command(
-                self.communicator,
-                "05",  # This is 'ENQ' in hex
-                self.communicator.output_format
-            )
-
-            # If successful and we have a response, logs it
-            if result["success"] and "response_formatted" in result:
-                self.logger.debug(f"< ENQ Response: {result['response_formatted']}")
-                return True
             else:
-                self.logger.debug("< No response to ENQ")
-                return False
+                raise ValueError(f"Unsupported format: {format_type}")
 
         except Exception as e:
-            self.logger.error(f"ENQ test error: {str(e)}")
-            return False
+            # If conversion fails, raises a ValueError
+            raise ValueError(f"Conversion error: {str(e)}")
 
-    def get_supported_test_commands(self) -> dict:
+    @staticmethod
+    def format_output_suggestion(raw_response: bytes) -> str:
         """
-        Returns the internal dictionary of test commands for the current gauge.
-        The user can iterate over these to manually verify certain commands.
+        Suggests the best output format based on what the response looks like.
+        For example, if the bytes decode cleanly as ASCII, it suggests "ASCII".
         """
-        return self.test_commands
+        if not raw_response:
+            return "Hex"  # Default if empty
 
-    def run_all_tests(self) -> dict:
+        try:
+            decoded = raw_response.decode('ascii')
+            # Checks if all chars are printable ASCII
+            if all(32 <= ord(c) <= 126 or c in '\r\n' for c in decoded):
+                return "ASCII"
+        except:
+            pass
+
+        # If we have non-ascii or high-bit bytes, suggests Hex
+        if any(b > 127 for b in raw_response):
+            return "Hex"
+
+        # If all bytes are small, decimal might be okay
+        if all(b < 100 for b in raw_response):
+            return "Decimal"
+
+        return "Hex"
+
+    @staticmethod
+    def send_manual_command(communicator, input_string: str, force_format: str = None) -> dict:
         """
-        Runs a suite of tests:
-         - Basic connection test
-         - ENQ test
-         - Command-specific tests
-        Returns a dictionary summarizing the results.
+        Interprets the user command string (detecting format automatically),
+        sends it via the communicator’s serial port, and returns the raw response + formatted response.
+
+        Args:
+         - communicator: The GaugeCommunicator instance
+         - input_string: The user-typed command (e.g. "05", "0x0300", or "Hello")
+         - force_format: If provided, forces the output format to a specific choice
+        Returns:
+         - A dictionary with success/error, raw/hex response, and possibly formatted text
         """
-        results = {
-            "connection": False,
-            "enq": False,
-            "commands_tested": {}
-        }
+        try:
+            # Detects the format
+            input_format, normalized = IntelligentCommandSender.detect_format(input_string)
+            # Converts to bytes
+            command_bytes = IntelligentCommandSender.convert_to_bytes(input_format, normalized)
 
-        # If not connected, no tests can run
-        if not self.communicator.ser or not self.communicator.ser.is_open:
-            return results
+            result = {
+                "input_format_detected": input_format,
+                "success": False,
+                "error": None,
+                "response_formatted": None,
+                "response_raw": None,
+                "rs_mode": communicator.rs_mode
+            }
 
-        # If we are here, we consider the basic connection valid
-        results["connection"] = True
+            # Checks if port is open
+            if communicator.ser and communicator.ser.is_open:
+                # Clears input/output buffers
+                communicator.ser.reset_input_buffer()
+                communicator.ser.reset_output_buffer()
 
-        # Attempts an ENQ test
-        results["enq"] = self.send_enq()
+                # If we are in RS485, set RTS accordingly
+                if communicator.rs_mode == "RS485":
+                    if hasattr(communicator.ser, 'rs485_mode'):
+                        communicator.ser.rs485_mode = communicator.rs485_config
+                    communicator.ser.setRTS(communicator.rts_level_for_tx)
+                    time.sleep(communicator.rts_delay_before_tx)
 
-        # For each known test command, attempts a read
-        for cmd_name, cmd_info in self.test_commands.items():
-            try:
-                # Constructs a GaugeCommand differently for ASCII or binary protocols
-                if self.gauge_type in ["PCG550", "PSG550", "MAG500", "MPG500"]:
-                    command = GaugeCommand(
-                        name=cmd_name,
-                        command_type="?",
-                        parameters={"pid": cmd_info["pid"], "cmd": cmd_info["cmd"]}
-                    )
-                elif self.gauge_type == "PPG550":
-                    command = GaugeCommand(name=cmd_info["cmd"], command_type="?")
+                # Writes the command
+                communicator.ser.write(command_bytes)
+                communicator.ser.flush()
+
+                # Switches to RX mode quickly if RS485
+                if communicator.rs_mode == "RS485":
+                    communicator.ser.setRTS(communicator.rts_level_for_rx)
+                    time.sleep(communicator.rts_delay_before_rx)
+
+                # Optional small delay
+                time.sleep(communicator.rts_delay)
+                # Reads the response
+                response = communicator.read_response()
+
+                if response:
+                    # Chooses a final format to display (either forced or communicator’s format)
+                    suggested_format = force_format or communicator.output_format
+                    communicator.set_output_format(suggested_format)
+
+                    # Fills in the result dictionary
+                    result.update({
+                        "success": True,
+                        "response_raw": response.hex(),
+                        "response_formatted": communicator.format_response(response)
+                    })
                 else:
-                    # e.g., CDG045D or others
-                    command = GaugeCommand(name=cmd_info.get("name", cmd_name), command_type=cmd_info["cmd"])
+                    # If no data came back
+                    result["error"] = "No response received"
+            else:
+                # If port not open
+                result["error"] = "Port not open"
 
-                # Creates raw command bytes via the protocol
-                cmd_bytes = self.protocol.create_command(command)
-                # Sends them using IntelligentCommandSender
-                result = IntelligentCommandSender.send_manual_command(
-                    self.communicator,
-                    cmd_bytes.hex(' '),
-                    self.communicator.output_format
-                )
+            return result
 
-                # Stashes the success or error in the results dict
-                results["commands_tested"][cmd_name] = {
-                    "success": result['success'],
-                    "response": result.get('response_formatted', '')
-                }
-
-            except Exception as e:
-                # If something fails, logs and records an error
-                results["commands_tested"][cmd_name] = {
-                    "success": False,
-                    "error": str(e)
-                }
-
-        return results
+        except Exception as e:
+            # Logs error details in communicator
+            communicator.logger.error(f"Manual command failed: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "response_formatted": None,
+                "response_raw": None
+            }

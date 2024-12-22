@@ -1,44 +1,45 @@
 """
-Implements the protocol logic for PPG550 and PPG570 MEMS Pirani & Piezo gauges.
+ppg_protocol.py
+Implements the protocol logic for PPG550/PPG570 MEMS Pirani & Piezo gauges.
+These typically use ASCII-based commands that start with '@XXX' and end with a backslash.
 """
 
 from typing import Optional, List
 
+# Imports the base abstract class
 from serial_communication.gauges.protocols.gauge_protocol import GaugeProtocol
 from serial_communication.models import GaugeCommand, GaugeResponse
 
 
 class PPGProtocol(GaugeProtocol):
     """
-    Manages ASCII-based commands for PPG550/PPG570 gauges.
+    Manages ASCII-based commands for PPG550/PPG570.
+    Addresses can range if using RS485; if RS232, address=254 is common.
     """
 
     def __init__(self, address: int = 254, gauge_type: str = "PPG550", logger: Optional[object] = None):
+        """
+        Stores the gauge_type (e.g., "PPG550" or "PPG570").
+        Also indicates if the gauge has an atmospheric sensor (PPG570 does).
+        """
         self.gauge_type = gauge_type
+        # Some PPG variants can read atmospheric pressure, so we note if has_atm is True
         self.has_atm = (gauge_type == "PPG570")
         super().__init__(address, logger)
         self.logger.debug(f"Initialized {self.gauge_type} protocol handler with ATM sensor: {self.has_atm}")
 
     def _initialize_commands(self):
         """
-        Adds user interface button for commands that are common to both PPG550 and PPG570.
-        Also adds additional commands if this is a PPG570.
+        Defines standard commands for PPG:
+         - 'PR3' => read combined pressure
+         - 'FV' => firmware version
+         - etc.
         """
         self._command_defs = {
             "pressure": {
                 "cmd": "PR3",
                 "type": "read",
                 "desc": "Read combined pressure measurement"
-            },
-            "pirani_pressure": {
-                "cmd": "PR1",
-                "type": "read",
-                "desc": "Read Pirani pressure"
-            },
-            "piezo_pressure": {
-                "cmd": "PR2",
-                "type": "read",
-                "desc": "Read Piezo pressure"
             },
             "temperature": {
                 "cmd": "T",
@@ -69,9 +70,10 @@ class PPGProtocol(GaugeProtocol):
                 "cmd": "FS",
                 "type": "write",
                 "desc": "Perform Piezo full scale adjustment"
-            },
+            }
         }
 
+        # If it's PPG570, we add ATM commands
         if self.has_atm:
             self._command_defs.update({
                 "atm_pressure": {
@@ -98,28 +100,34 @@ class PPGProtocol(GaugeProtocol):
 
     def create_command(self, command: GaugeCommand) -> bytes:
         """
-        Builds ASCII command string for PPG gauges based on the command definitions.
+        Builds an ASCII command string, e.g. "@254PR3?\"
+        or "@254U!mbar\" if user sets units.
         """
         cmd_info = self._command_defs.get(command.name)
         if not cmd_info:
             raise ValueError(f"Unknown command: {command.name}")
 
+        # If RS485, we format the address as e.g. 003 => 3
         addr = f"{self.address:03d}" if self.rs485_mode else "254"
+        # Command type: '?' for read, '!' for write
         cmd_type = "!" if command.command_type in ["!", "write"] else "?"
+        # Builds the base string
         cmd_str = f"@{addr}{cmd_info['cmd']}{cmd_type}"
 
+        # If user set a parameter, e.g. "@254U!mbar\"
         if cmd_type == "!" and command.parameters:
             value = command.parameters.get('value')
             if value is not None:
                 cmd_str += str(value)
 
+        # Ends with a backslash
         cmd_str += "\\"
         self.logger.debug(f"Created PPG command: {cmd_str}")
         return cmd_str.encode('ascii')
 
     def parse_response(self, response: bytes) -> GaugeResponse:
         """
-        Decodes ASCII response, checks for ACK/NAK, and returns a structured GaugeResponse.
+        Decodes ASCII, looks for @ACK or @NAK, returns a structured GaugeResponse.
         """
         try:
             if not response:
@@ -130,7 +138,7 @@ class PPGProtocol(GaugeProtocol):
                     error_message="No response received"
                 )
 
-            resp_str = response.decode('ascii').strip()
+            resp_str = response.decode('ascii', errors='replace').strip()
             self.logger.debug(f"Parsing response: {resp_str}")
 
             if resp_str.startswith("@NAK"):
@@ -168,7 +176,10 @@ class PPGProtocol(GaugeProtocol):
 
     def test_commands(self) -> List[bytes]:
         """
-        Returns a small set of test commands that query firmware version and pressure.
+        Provides a small set of ASCII commands that test basic functionality:
+         - Query software version
+         - Query pressure
+         - If PPG570, query ATM pressure as well
         """
         commands = [
             self.create_command(GaugeCommand(name="software_version", command_type="?")),
