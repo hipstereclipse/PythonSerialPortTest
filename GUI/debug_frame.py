@@ -144,10 +144,11 @@ class DebugFrame(ttk.LabelFrame):
 
     def _on_debug_toggle(self):
         """
-        Called when user toggles "Show Debug."
-        This calls parent.set_show_debug(...) if available.
+        Called when user toggles "Show Debug" in the checkbox.
+        Invokes the parent method to manage visibility of debug messages.
         """
         if hasattr(self.parent, 'set_show_debug'):
+            # Notify parent about the toggle state
             self.parent.set_show_debug(self.show_debug_var.get())
 
     def set_enabled(self, enabled: bool):

@@ -94,18 +94,17 @@ class OutputFrame(ttk.LabelFrame):
 
     def filter_debug_messages(self, show_debug: bool):
         """
-        Updates display to show or hide debug messages.
+        Updates the output display to show or hide debug messages based on the state.
         Args:
-            show_debug: True to show debug messages, False to hide them
+            show_debug: Whether to display debug (`True`) or hide them (`False`).
         """
-        # Clears current display
+        # Clear the current display
         self.output_text.delete(1.0, tk.END)
 
-        # Re-displays messages with filtering
+        # Iterate through stored messages and filter based on debug visibility
         for msg in self.messages:
-            # Shows message if debug enabled or not a debug message
-            if show_debug or not msg.startswith("[") or "DEBUG" not in msg:
+            if show_debug or not ("DEBUG" in msg):
                 self.output_text.insert(tk.END, msg + "\n")
 
-        # Scrolls to end
+        # Keep the scroll at the end after updating
         self.output_text.see(tk.END)

@@ -528,21 +528,22 @@ class GaugeApplication:
 
     def set_show_debug(self, enabled: bool):
         """
-        Controls visibility of debug messages in output.
-        Updates both logger level and existing message display.
+        Controls visibility of debug messages in the output frame.
+        Args:
+            enabled: True to display debug messages, False to hide them
         """
         self.show_debug = enabled
+
+        # Update logger level to include/exclude DEBUG logs
         if enabled:
-            # Shows all messages by setting DEBUG level
-            self.logger.setLevel(logging.DEBUG)
+            self.logger.setLevel(logging.DEBUG)  # Show all debug-level logs
             self.log_message("Debug messages enabled")
         else:
-            # Hides debug messages by setting INFO level
-            self.logger.setLevel(logging.INFO)
+            self.logger.setLevel(logging.INFO)  # Hide debug-level logs
             self.log_message("Debug messages disabled")
 
-        # Updates output frame to filter existing messages
-        if hasattr(self, 'output_frame'):
+        # Filter existing messages in the output frame
+        if hasattr(self, "output_frame"):
             self.output_frame.filter_debug_messages(enabled)
 
     def log_message(self, msg: str):
