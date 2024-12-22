@@ -1,35 +1,45 @@
 """
-OutputFrame: Displays logs and gauge responses with optional format selection.
+output_frame.py
+
+This module implements the OutputFrame class which handles display of log messages
+and command responses. It supports:
+- Message filtering for debug vs non-debug content
+- Output format selection
+- Scrollable text display
+- Message history tracking
 """
 
 import tkinter as tk
 from tkinter import ttk
-
-# Imports the global list of known output formats
 from serial_communication.config import OUTPUT_FORMATS
-
 
 class OutputFrame(ttk.LabelFrame):
     """
     Frame for displaying command outputs and response logs.
-    Provides a text area for logs and an option to select output formats.
+    Provides format selection and debug message filtering.
     """
 
     def __init__(self, parent, output_format: tk.StringVar):
         """
-        Initializes the OutputFrame.
-        parent: The parent widget (usually the main window).
-        output_format: A StringVar that tracks the current output format.
+        Creates and configures the output display frame.
+        Args:
+            parent: Parent widget (usually main window)
+            output_format: StringVar tracking selected output format
         """
         super().__init__(parent, text="Output")
+
+        # Stores reference to format variable
         self.output_format = output_format
 
-        # Creates a sub-frame for the format dropdown
+        # List to track all messages for filtering
+        self.messages = []
+
+        # Creates format selection controls
         format_frame = ttk.Frame(self)
         format_frame.pack(fill=tk.X, padx=5, pady=5)
 
+        # Adds format label and dropdown
         ttk.Label(format_frame, text="Format:").pack(side=tk.LEFT, padx=5)
-        # Creates an OptionMenu to let the user pick an output format
         ttk.OptionMenu(
             format_frame,
             self.output_format,
@@ -37,24 +47,65 @@ class OutputFrame(ttk.LabelFrame):
             *OUTPUT_FORMATS
         ).pack(side=tk.LEFT, padx=5)
 
-        # Creates a text widget to display logs
-        self.output_text = tk.Text(self, height=20, width=80, wrap=tk.WORD)
+        # Creates scrollable text area for output
+        self.output_text = tk.Text(
+            self,
+            height=20,
+            width=80,
+            wrap=tk.WORD  # Wraps text at word boundaries
+        )
         self.output_text.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Adds a scrollbar to the text widget
-        scrollbar = ttk.Scrollbar(self.output_text, orient="vertical", command=self.output_text.yview)
+        # Adds vertical scrollbar
+        scrollbar = ttk.Scrollbar(
+            self.output_text,
+            orient="vertical",
+            command=self.output_text.yview
+        )
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Links scrollbar to text widget
         self.output_text.config(yscrollcommand=scrollbar.set)
 
     def append_log(self, message: str):
         """
-        Appends a message to the log text box and scrolls to the end.
+        Adds a new message to both storage and display.
+        Args:
+            message: Text to add to log
         """
+        # Stores message in history
+        self.messages.append(message)
+
+        # Adds to display with newline
         self.output_text.insert(tk.END, message + "\n")
+
+        # Scrolls to show new message
         self.output_text.see(tk.END)
 
     def clear(self):
         """
-        Clears all content from the log text box.
+        Removes all content from both storage and display.
         """
+        # Clears message history
+        self.messages.clear()
+
+        # Clears display widget
         self.output_text.delete(1.0, tk.END)
+
+    def filter_debug_messages(self, show_debug: bool):
+        """
+        Updates display to show or hide debug messages.
+        Args:
+            show_debug: True to show debug messages, False to hide them
+        """
+        # Clears current display
+        self.output_text.delete(1.0, tk.END)
+
+        # Re-displays messages with filtering
+        for msg in self.messages:
+            # Shows message if debug enabled or not a debug message
+            if show_debug or not msg.startswith("[") or "DEBUG" not in msg:
+                self.output_text.insert(tk.END, msg + "\n")
+
+        # Scrolls to end
+        self.output_text.see(tk.END)

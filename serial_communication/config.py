@@ -229,7 +229,8 @@ GAUGE_PARAMETERS = {
         "bytesize": serial.EIGHTBITS,
         "parity": serial.PARITY_NONE,
         "stopbits": serial.STOPBITS_ONE,
-        "device_id": 0x00,
+        "device_id": 0x00,  # Not used for CDG protocol
+        # Added data_tx_mode command so it can be recognized
         "commands": {
             "pressure": {"cmd": "read", "name": "pressure", "desc": "Read pressure"},
             "temperature": {"cmd": "read", "name": "temperature", "desc": "Read temperature status"},
@@ -247,10 +248,11 @@ GAUGE_PARAMETERS = {
             "heating_status": {"cmd": "read", "name": "heating_status", "desc": "Read heating status"},
             "temperature_ok": {"cmd": "read", "name": "temperature_ok", "desc": "Check if temperature is OK"},
             "zero_adjust_value": {"cmd": "read", "name": "zero_adjust_value", "desc": "Read zero adjustment value"},
-            "dc_output_offset": {"cmd": "read", "name": "dc_output_offset", "desc": "Read DC output offset"}
+            "dc_output_offset": {"cmd": "read", "name": "dc_output_offset", "desc": "Read DC output offset"},
+            "data_tx_mode": {"cmd": "special", "name": "data_tx_mode", "desc": "Toggle data transmission mode"}
         },
         "rs_modes": ["RS232"],
-        "timeout": 1,
+        "timeout": 1,  # 1 second timeout
         "write_timeout": 1
     },
     "TC600": {
@@ -290,22 +292,20 @@ BAUD_RATES = [9600, 19200, 38400, 57600, 115200]
 def setup_logging(name: str) -> logging.Logger:
     """
     Configures logging for the application.
-    name: The name of the logger to create/obtain.
-    returns: The configured Logger instance.
+    We will dynamically adjust the level to DEBUG or INFO to show/hide debug messages.
     """
     logger = logging.getLogger(name)
-    # Set to DEBUG to capture all messages. Adjust to INFO to reduce verbosity.
     logger.setLevel(logging.DEBUG)
 
-    # Creates a handler that writes logs to the console
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
 
-    # Applies a standard format to log lines
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     console_handler.setFormatter(formatter)
 
-    # Attaches the console handler to the logger
+    # Removes old handlers if any
+    if logger.hasHandlers():
+        logger.handlers.clear()
     logger.addHandler(console_handler)
 
     return logger
