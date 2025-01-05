@@ -26,6 +26,15 @@ GAUGE_OUTPUT_FORMATS = {
 
 # Stores parameters for each supported gauge, including baud rates, commands, etc.
 GAUGE_PARAMETERS = {
+    "TC600": {
+        "baudrate": 9600,
+        "commands": {
+        "start_pump": {"cmd": "write", "desc": "Start the turbo pump"},
+        "stop_pump":  {"cmd": "write", "desc": "Stop the turbo pump"},
+        "read_speed": {"cmd": "read",  "desc": "Read the turbo rotation speed"},
+        "vent":       {"cmd": "write", "desc": "Vent the turbo pump"}
+        }
+    },
     "PCG550": {
         "baudrate": 57600,
         "device_id": 0x02,
