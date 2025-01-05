@@ -345,28 +345,30 @@ class GaugeApplication:
            and contains a TurboFrame that auto-resizes itself so nothing is cut off.
            If already open, you can decide whether to bring it to front or do nothing.
            """
-        # Optionally check if self.turbo_window already exists and is open.
-        # If so, we could just lift it. For simplicity, we'll always create a fresh one:
+        # If you want only one Turbo window at a time, you can check if self.turbo_window is not None:
+        if self.turbo_window:
+            # For example, simply bring it to the front:
+            self.turbo_window.lift()
+            return
 
+        # Create a new Toplevel for the Turbo window
         self.turbo_window = tk.Toplevel(self.root)
         self.turbo_window.title("Turbo Controller")
 
-        # We import your TurboFrame
+        # Import your TurboFrame and instantiate it, passing 'self' as the main_app
         from GUI.turbo_frame import TurboFrame
-
-        # Create the frame, passing self so it can log to OutputFrame
         turbo_frame = TurboFrame(self.turbo_window, self)
 
-        # No forced geometry needed: turbo_frame._finalize_geometry() auto-sizes the window
-        # If you want a default position, you can do something like:
-        # self.turbo_window.geometry("+100+100")
-
-        # If user closes this Toplevel, we can do something if needed, e.g.:
+        # Define a close callback to clear the reference
         def on_turbo_close():
             self.turbo_window.destroy()
             self.turbo_window = None
 
         self.turbo_window.protocol("WM_DELETE_WINDOW", on_turbo_close)
+
+        # No forced geometry here: The TurboFrame calls _finalize_geometry() to
+        # measure how large the window should be and place it center-right of main app.
+        # So we just create the Toplevel and let TurboFrame do the rest.
 
     def update_gui(self):
         """
