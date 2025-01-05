@@ -361,7 +361,7 @@ class GaugeApplication:
         offset_y = main_y + (main_h // 4)
 
         window_width = 300
-        window_height = 250
+        window_height = 380
         self.turbo_window.geometry(f"{window_width}x{window_height}+{offset_x}+{offset_y}")
 
         # If user manually closes this window, uncheck the "Turbo" checkbutton

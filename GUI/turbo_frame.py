@@ -1,14 +1,23 @@
 """
 turbo_frame.py
-Enhanced TurboFrame class for controlling a Turbo Pump, e.g., "TC600".
-Structures the UI similarly to the main window with labeled frames,
-and ensures everything is clearly visible without cutoff.
+Provides a TurboFrame class that manages a Turbo Pump (e.g., "TC600") in a layout akin to your main GUI:
+ - Connection frame with two rows:
+   Row 1: "Turbo Port", dropdown, "Settings" button
+   Row 2: status label (left), connect/disconnect button (right)
+ - "TurboSerialSettingsFrame" toggles open in the same window when user clicks "Settings",
+   similar to your main serial settings approach (but specialized for the turbo).
+ - Command frame (combobox + "Send" button).
+ - Status frame (speed, temperature, load) each with cyc checkbox + "Retrieve" button.
+ - Cyclical status update frame with two rows:
+   Row 1: "Enable Cyc Updates" checkbox
+   Row 2: "Update Interval (ms)", entry, "[Apply]" button
+ - Auto-resizes to show all content using a finalize_geometry method so nothing is cut off.
 
-Changes from previous:
- - We let the Toplevel auto-size or we can forcibly set geometry (like 400x350).
- - We add an individual "Retrieve" button on each status line to query that parameter.
- - We add a checkbox on each status line to choose if that parameter is included
-   in the cyclical update cycle.
+This file does NOT remove any prior functionality (retrieve buttons, cyc toggles, etc.)—only adds
+a specialized "TurboSerialSettingsFrame" in a clean, modular manner.
+
+All logs and command results go to main_app.log_message(...),
+and it uses your existing communicator approach with "TC600" if defined in GAUGE_PARAMETERS.
 """
 
 import tkinter as tk
@@ -18,227 +27,367 @@ import threading
 import queue
 import serial.tools.list_ports
 
-# Imports your existing communicator approach
+# Your existing communicator
 from serial_communication.communicator.gauge_communicator import GaugeCommunicator
 from serial_communication.models import GaugeCommand, GaugeResponse
 
 
+class TurboSerialSettingsFrame(ttk.LabelFrame):
+    """
+    A specialized serial settings frame for Turbo, similar to your main SerialSettingsFrame approach.
+    Provides comboboxes for baud, data bits, parity, stop bits, plus an "Apply" button.
+    We place it under the "Settings" button in the TurboFrame, toggling it open/closed.
+    """
+
+    def __init__(self, parent, apply_callback):
+        """
+        parent: the parent widget (TurboFrame)
+        apply_callback: function to call when user clicks "Apply"—
+                       passes the current settings dict, so TurboFrame can do something with them.
+        """
+        super().__init__(parent, text="Turbo Serial Config")
+
+        self.apply_callback = apply_callback
+        self.baud_var = tk.StringVar(value="9600")
+        self.bytesize_var = tk.StringVar(value="8")
+        self.parity_var = tk.StringVar(value="N")
+        self.stopbits_var = tk.StringVar(value="1")
+
+        self._create_widgets()
+
+    def _create_widgets(self):
+        """
+        Places comboboxes for baud, bits, parity, stop, plus an "Apply" button.
+        """
+        frame = ttk.Frame(self)
+        frame.pack(fill=tk.X, padx=5, pady=5)
+
+        # Baud
+        ttk.Label(frame, text="Baud:").pack(side=tk.LEFT, padx=2)
+        baud_combo = ttk.Combobox(
+            frame,
+            textvariable=self.baud_var,
+            values=["1200","2400","4800","9600","19200","38400","57600","115200"],
+            width=7,
+            state="readonly"
+        )
+        baud_combo.pack(side=tk.LEFT, padx=2)
+
+        # Data bits
+        ttk.Label(frame, text="Bits:").pack(side=tk.LEFT, padx=2)
+        bits_combo = ttk.Combobox(
+            frame,
+            textvariable=self.bytesize_var,
+            values=["5","6","7","8"],
+            width=2,
+            state="readonly"
+        )
+        bits_combo.pack(side=tk.LEFT, padx=2)
+
+        # Parity
+        ttk.Label(frame, text="Parity:").pack(side=tk.LEFT, padx=2)
+        parity_combo = ttk.Combobox(
+            frame,
+            textvariable=self.parity_var,
+            values=["N","E","O","M","S"],
+            width=2,
+            state="readonly"
+        )
+        parity_combo.pack(side=tk.LEFT, padx=2)
+
+        # Stop bits
+        ttk.Label(frame, text="Stop:").pack(side=tk.LEFT, padx=2)
+        stop_combo = ttk.Combobox(
+            frame,
+            textvariable=self.stopbits_var,
+            values=["1","1.5","2"],
+            width=3,
+            state="readonly"
+        )
+        stop_combo.pack(side=tk.LEFT, padx=2)
+
+        # "Apply" button
+        apply_btn = ttk.Button(
+            frame,
+            text="Apply",
+            command=self._on_apply
+        )
+        apply_btn.pack(side=tk.LEFT, padx=5)
+
+    def _on_apply(self):
+        """
+        Called when user clicks "Apply."
+        We gather the settings and call the apply_callback with the dict.
+        """
+        settings = {
+            "baudrate": int(self.baud_var.get()),
+            "bytesize": int(self.bytesize_var.get()),
+            "parity": self.parity_var.get(),
+            "stopbits": float(self.stopbits_var.get())
+        }
+        self.apply_callback(settings)
+
+
 class TurboFrame(ttk.Frame):
     """
-    Specialized frame for controlling a Turbo Pump, e.g. "TC600".
-    Contains:
-      1) Connection frame
-      2) Command frame (like a mini command list)
-      3) Status frame with speed/temperature/load
-         - Each row has:
-           [x] cyclical checkbox
-           label name
-           label current value
-           [Retrieve] button
-      4) A cyclical update mechanism with user-settable update interval,
-         querying only those parameters whose checkboxes are checked.
+    The main TurboFrame, featuring:
+      - Two-row Turbo Connection
+      - A togglable TurboSerialSettingsFrame for advanced config
+      - Command frame
+      - Status frame
+      - Cyc status update
+      - Auto-resizing to fit all
     """
 
     def __init__(self, parent, main_app):
         """
-        parent: The Toplevel or parent frame where this is placed.
-        main_app: The main GaugeApplication to log messages and show results in the OutputFrame.
+        parent: Toplevel or parent container
+        main_app: reference to the main application
         """
         super().__init__(parent, relief=tk.RAISED, borderwidth=1)
 
-        # References
         self.parent = parent
-        self.main_app = main_app  # so we can log to the main OutputFrame
+        self.main_app = main_app  # for logging to OutputFrame, etc.
+
+        # Connection
         self.connected = False
-
-        # Internal communicator for the Turbo
         self.turbo_communicator: Optional[GaugeCommunicator] = None
-
-        # Variables for connection
         self.turbo_port = tk.StringVar(value="")
         self.status_text = tk.StringVar(value="Disconnected")
 
-        # Variables for cyclical reading
-        self.cycle_var = tk.BooleanVar(value=False)
-        self.update_interval = tk.StringVar(value="1000")  # default 1000 ms
-        self.status_thread: Optional[threading.Thread] = None
-        self.stop_thread = False  # A flag to stop the cyclical thread
+        # We can open/close the specialized TurboSerialSettingsFrame
+        self.settings_frame: Optional[TurboSerialSettingsFrame] = None
 
-        # Example status parameters: speed, temperature, load
-        # Each has a variable to show current value, plus a BooleanVar for cyclical updates
+        # cyc reading toggles
+        self.cycle_var = tk.BooleanVar(value=False)
+        self.update_interval = tk.StringVar(value="1000")
+        self.stop_thread = False
+        self.status_thread: Optional[threading.Thread] = None
+
+        # status data
         self.speed_var = tk.StringVar(value="---")
         self.speed_cyc = tk.BooleanVar(value=True)
-
         self.temp_var = tk.StringVar(value="---")
         self.temp_cyc = tk.BooleanVar(value=True)
-
         self.load_var = tk.StringVar(value="---")
         self.load_cyc = tk.BooleanVar(value=True)
 
-        # Creates the UI
+        # commands
+        self.turbo_cmd_var = tk.StringVar()
+
+        # create UI
         self._create_widgets()
 
-        # Forces the parent Toplevel to a suitable size for everything,
-        # or let geometry managers auto-size.
-        # If your Toplevel is pinned from the main app, you can do:
-        # parent.geometry("400x350")
-        # But we do it here for demonstration:
-        if isinstance(self.parent, tk.Toplevel):
-            self.parent.geometry("800x350")  # Enough space for all widgets
+        # finalize geometry
+        self._finalize_geometry()
 
     def _create_widgets(self):
         """
-        Builds the layout in 4 labeled frames:
-          1) Turbo Connection
-          2) Turbo Commands
-          3) Turbo Status (with checkboxes and retrieve buttons)
-          4) Cyclical reading controls
+        Builds the 4 main frames:
+         1) Turbo Connection (two rows) + togglable TurboSerialSettingsFrame
+         2) Command frame
+         3) Status frame
+         4) Cyc reading
         """
-        # 1) Connection Frame
+
+        # === (1) Turbo Connection Frame ===
         conn_frame = ttk.LabelFrame(self, text="Turbo Connection")
         conn_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        ttk.Label(conn_frame, text="Turbo Port:").pack(side=tk.LEFT, padx=5)
-        available_ports = [p.device for p in serial.tools.list_ports.comports()]
+        # row 1
+        row1 = ttk.Frame(conn_frame)
+        row1.pack(fill=tk.X, padx=5, pady=2)
+
+        ttk.Label(row1, text="Turbo Port:").pack(side=tk.LEFT, padx=5)
+
+        ports = [p.device for p in serial.tools.list_ports.comports()]
         self.port_combo = ttk.Combobox(
-            conn_frame,
+            row1,
             textvariable=self.turbo_port,
-            values=available_ports,
+            values=ports,
             width=15,
             state="readonly"
         )
         self.port_combo.pack(side=tk.LEFT, padx=5)
-        if available_ports:
-            self.turbo_port.set(available_ports[0])
+        if ports:
+            self.turbo_port.set(ports[0])
 
-        self.connect_button = ttk.Button(
-            conn_frame,
+        # "Settings" button toggles a TurboSerialSettingsFrame below
+        settings_btn = ttk.Button(
+            row1,
+            text="Settings",
+            command=self._toggle_settings_frame
+        )
+        settings_btn.pack(side=tk.LEFT, padx=5)
+
+        # row 2
+        row2 = ttk.Frame(conn_frame)
+        row2.pack(fill=tk.X, padx=5, pady=2)
+
+        status_lbl = ttk.Label(row2, textvariable=self.status_text)
+        status_lbl.pack(side=tk.LEFT, padx=5)
+
+        self.connect_btn = ttk.Button(
+            row2,
             text="Connect",
             command=self._toggle_connection
         )
-        self.connect_button.pack(side=tk.LEFT, padx=5)
+        self.connect_btn.pack(side=tk.RIGHT, padx=5)
 
-        ttk.Label(conn_frame, textvariable=self.status_text).pack(side=tk.LEFT, padx=10)
+        # We'll place the specialized settings frame below row2 if toggled
+        # (we won't create it here yet; we do that in _toggle_settings_frame)
 
-        # 2) Command Frame
+        # === (2) Command Frame
         cmd_frame = ttk.LabelFrame(self, text="Turbo Commands")
         cmd_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # A combobox to pick from known turbo commands
-        self.turbo_cmd_var = tk.StringVar()
         self.turbo_cmd_combo = ttk.Combobox(
             cmd_frame,
             textvariable=self.turbo_cmd_var,
-            values=["start_pump", "stop_pump", "vent", "read_speed"],  # Example commands
+            values=["start_pump", "stop_pump", "vent", "read_speed"],
             state="readonly",
             width=20
         )
         self.turbo_cmd_combo.pack(side=tk.LEFT, padx=5)
 
-        send_btn = ttk.Button(
-            cmd_frame,
-            text="Send",
-            command=self._send_turbo_command
-        )
+        send_btn = ttk.Button(cmd_frame, text="Send", command=self._send_turbo_command)
         send_btn.pack(side=tk.LEFT, padx=5)
 
-        # 3) Status Frame
+        # === (3) Status Frame
         status_frame = ttk.LabelFrame(self, text="Turbo Status")
         status_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # We'll use a small helper to build each row:
-        # row format:  [checkbox for cyc]   <Label>   <Value label>   [Retrieve button]
-        # Speed row
         self._build_status_row(
-            parent=status_frame,
-            row_idx=0,
-            param_label="Speed (rpm):",
-            param_var=self.speed_var,
+            status_frame,
+            label_text="Speed (rpm):",
+            var=self.speed_var,
             cyc_var=self.speed_cyc,
             retrieve_callback=self._retrieve_speed
         )
-
-        # Temperature row
         self._build_status_row(
-            parent=status_frame,
-            row_idx=1,
-            param_label="Temperature (C):",
-            param_var=self.temp_var,
+            status_frame,
+            label_text="Temperature (C):",
+            var=self.temp_var,
             cyc_var=self.temp_cyc,
             retrieve_callback=self._retrieve_temp
         )
-
-        # Load row
         self._build_status_row(
-            parent=status_frame,
-            row_idx=2,
-            param_label="Load (%):",
-            param_var=self.load_var,
+            status_frame,
+            label_text="Load (%):",
+            var=self.load_var,
             cyc_var=self.load_cyc,
             retrieve_callback=self._retrieve_load
         )
 
-        # 4) Cyclical reading controls
-        cycle_frame = ttk.LabelFrame(self, text="Cyclical Status Update")
-        cycle_frame.pack(fill=tk.X, padx=5, pady=5)
+        # === (4) Cyclical Status Update
+        cyc_frame = ttk.LabelFrame(self, text="Cyclical Status Update")
+        cyc_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        ttk.Checkbutton(
-            cycle_frame,
+        cyc_row1 = ttk.Frame(cyc_frame)
+        cyc_row1.pack(fill=tk.X, padx=5, pady=2)
+
+        cyc_check = ttk.Checkbutton(
+            cyc_row1,
             text="Enable Cyclical Updates",
             variable=self.cycle_var,
             command=self._toggle_cycle
-        ).pack(side=tk.LEFT, padx=5)
+        )
+        cyc_check.pack(side=tk.LEFT, padx=5)
 
-        ttk.Label(cycle_frame, text="Update Interval (ms):").pack(side=tk.LEFT, padx=5)
-        ttk.Entry(cycle_frame, textvariable=self.update_interval, width=6).pack(side=tk.LEFT, padx=5)
+        cyc_row2 = ttk.Frame(cyc_frame)
+        cyc_row2.pack(fill=tk.X, padx=5, pady=2)
 
-        ttk.Button(
-            cycle_frame,
-            text="Apply",
-            command=self._apply_interval
-        ).pack(side=tk.LEFT, padx=5)
+        ttk.Label(cyc_row2, text="Update Interval (ms):").pack(side=tk.LEFT, padx=5)
+        ttk.Entry(cyc_row2, textvariable=self.update_interval, width=6).pack(side=tk.LEFT, padx=5)
 
-        # Finally, we pack 'self' to fill
+        apply_btn = ttk.Button(cyc_row2, text="Apply", command=self._apply_interval)
+        apply_btn.pack(side=tk.LEFT, padx=5)
+
+        # pack self
         self.pack(fill=tk.BOTH, expand=True)
 
-    def _build_status_row(self, parent, row_idx, param_label, param_var, cyc_var, retrieve_callback):
+    def _build_status_row(self, parent_frame, label_text, var, cyc_var, retrieve_callback):
         """
-        Creates a row in the status frame with:
-          - A checkbutton for cyc. updates
-          - A label for param_label
-          - A label for param_var
-          - A retrieve button to query that param alone
+        Creates a row in the status frame:
+          [Checkbutton cyc_var] label_text var(label) [Retrieve button]
         """
-        cyc_cb = ttk.Checkbutton(
-            parent,
-            variable=cyc_var
-        )
-        cyc_cb.grid(row=row_idx, column=0, padx=5, pady=2, sticky=tk.W)
+        row = ttk.Frame(parent_frame)
+        row.pack(fill=tk.X, padx=5, pady=3)
 
-        lbl_name = ttk.Label(parent, text=param_label)
-        lbl_name.grid(row=row_idx, column=1, padx=5, pady=2, sticky=tk.W)
+        cyc_cb = ttk.Checkbutton(row, variable=cyc_var)
+        cyc_cb.pack(side=tk.LEFT, padx=5)
 
-        lbl_value = ttk.Label(parent, textvariable=param_var)
-        lbl_value.grid(row=row_idx, column=2, padx=5, pady=2, sticky=tk.W)
+        lbl = ttk.Label(row, text=label_text)
+        lbl.pack(side=tk.LEFT, padx=5)
 
-        btn_retrieve = ttk.Button(parent, text="Retrieve", command=retrieve_callback)
-        btn_retrieve.grid(row=row_idx, column=3, padx=5, pady=2)
+        val_lbl = ttk.Label(row, textvariable=var)
+        val_lbl.pack(side=tk.LEFT, padx=5)
 
-    # =================== Connection Methods ===================
+        rtv_btn = ttk.Button(row, text="Retrieve", command=retrieve_callback)
+        rtv_btn.pack(side=tk.LEFT, padx=5)
+
+    def _finalize_geometry(self):
+        """
+        After creating widgets, measure required size and set geometry
+        so the Toplevel doesn't cut off any part of the UI.
+        """
+        if isinstance(self.parent, tk.Toplevel):
+            self.parent.update_idletasks()
+            needed_w = self.winfo_reqwidth() + 20
+            needed_h = self.winfo_reqheight() + 20
+            self.parent.geometry(f"{needed_w}x{needed_h}")
+
+    # ========== Turbo Connection "Settings" Toggle ==========
+    def _toggle_settings_frame(self):
+        """
+        Called when user clicks the "Settings" button in row 1 of the TurboConnection frame.
+        Toggles a specialized TurboSerialSettingsFrame below row2 if it's not there, or destroys it if it is.
+        """
+        # If we already have one, destroy
+        if self.settings_frame:
+            self.settings_frame.destroy()
+            self.settings_frame = None
+            self._finalize_geometry()
+            return
+
+        # Otherwise, create
+        # We place it inside "conn_frame" area =>
+        # But we only have references to self here, so let's create a sub-frame
+        self.settings_frame = TurboSerialSettingsFrame(self, apply_callback=self._on_turbo_settings_apply)
+        # We place it *after* the connection frame, or we can do it right here.
+        # Let's just pack it right below the parent frame:
+        self.settings_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        self._finalize_geometry()
+
+    def _on_turbo_settings_apply(self, settings: dict):
+        """
+        Called when user clicks "Apply" in the TurboSerialSettingsFrame.
+        This is analogous to how your main GUI updates serial settings for the gauge.
+        """
+        # If we have a communicator and it's open, apply these settings
+        if self.turbo_communicator and self.turbo_communicator.ser and self.turbo_communicator.ser.is_open:
+            try:
+                self.turbo_communicator.ser.baudrate = settings["baudrate"]
+                self.turbo_communicator.ser.bytesize = settings["bytesize"]
+                self.turbo_communicator.ser.parity   = settings["parity"]
+                self.turbo_communicator.ser.stopbits = settings["stopbits"]
+
+                # we can log that the turbo settings changed
+                self.main_app.log_message(f"Turbo serial settings updated: {settings}")
+            except Exception as e:
+                self.main_app.log_message(f"Failed to update Turbo serial settings: {str(e)}")
+        else:
+            self.main_app.log_message("Turbo not connected. Settings will apply after connect?")
+
+    # ========== Connect/Disconnect Methods ==========
     def _toggle_connection(self):
-        """
-        Toggles connect/disconnect states.
-        """
         if not self.connected:
             self._connect_turbo()
         else:
             self._disconnect_turbo()
 
     def _connect_turbo(self):
-        """
-        Connects to the turbo if user chose a port.
-        Uses gauge_type='TC600' if that is in your GAUGE_PARAMETERS.
-        """
         port = self.turbo_port.get()
         if not port:
             messagebox.showerror("Turbo Error", "No port selected for Turbo.")
@@ -247,13 +396,13 @@ class TurboFrame(ttk.Frame):
         try:
             self.turbo_communicator = GaugeCommunicator(
                 port=port,
-                gauge_type="TC600",  # or your turbo gauge type
-                logger=self.main_app  # so debug logs go to main_app.debug(...)
+                gauge_type="TC600",  # or your actual turbo gauge
+                logger=self.main_app
             )
             if self.turbo_communicator.connect():
                 self.connected = True
                 self.status_text.set("Connected")
-                self.connect_button.config(text="Disconnect")
+                self.connect_btn.config(text="Disconnect")
                 self.main_app.log_message("Turbo: Connection established.")
             else:
                 self.main_app.log_message("Turbo: Failed to connect.")
@@ -263,10 +412,6 @@ class TurboFrame(ttk.Frame):
             self.turbo_communicator = None
 
     def _disconnect_turbo(self):
-        """
-        Disconnects if connected, logs the result.
-        If cyclical reading is active, stops it.
-        """
         if self.turbo_communicator:
             try:
                 self.turbo_communicator.disconnect()
@@ -276,9 +421,8 @@ class TurboFrame(ttk.Frame):
         self.turbo_communicator = None
         self.connected = False
         self.status_text.set("Disconnected")
-        self.connect_button.config(text="Connect")
+        self.connect_btn.config(text="Connect")
 
-        # Also stop cyc updates if on
         if self.cycle_var.get():
             self.cycle_var.set(False)
             self._toggle_cycle()
@@ -286,52 +430,39 @@ class TurboFrame(ttk.Frame):
         self.main_app.log_message("Turbo: Disconnected.")
 
     def _check_connected(self) -> bool:
-        """
-        Checks if turbo_communicator is connected, logs if not.
-        """
         if not self.connected or not self.turbo_communicator:
             self.main_app.log_message("Turbo is not connected.")
             return False
         return True
 
-    # =================== Command Frame Methods ===================
+    # ========== Command Frame Methods ==========
     def _send_turbo_command(self):
         """
-        Sends the command selected in self.turbo_cmd_combo to the turbo device.
-        We guess a read or write command_type based on known commands.
+        Sends whichever command is selected in turbo_cmd_var (start_pump, stop_pump, etc.).
         """
         if not self._check_connected():
             return
-
-        cmd_name = self.turbo_cmd_var.get()
+        cmd_name = self.turbo_cmd_var.get().strip()
         if not cmd_name:
-            messagebox.showerror("Turbo Error", "No command selected.")
+            messagebox.showerror("Turbo Error", "No turbo command selected.")
             return
 
-        # We guess read vs write.
-        # If your config keys define them, you can do a more robust approach.
-        command_type = "?" if cmd_name.startswith("read_") else "!"
+        cmd_type = "?" if cmd_name.startswith("read_") else "!"
         try:
-            cmd = GaugeCommand(name=cmd_name, command_type=command_type)
+            cmd = GaugeCommand(name=cmd_name, command_type=cmd_type)
             resp = self.turbo_communicator.send_command(cmd)
             self._log_cmd_result(cmd_name, resp)
         except Exception as e:
             self.main_app.log_message(f"Turbo command error for {cmd_name}: {str(e)}")
 
     def _log_cmd_result(self, cmd_name: str, resp: GaugeResponse):
-        """
-        Logs a command result to the main application's OutputFrame.
-        """
         if resp.success:
-            self.main_app.log_message(f"Turbo {cmd_name}: {resp.formatted_data}")
+            self.main_app.log_message(f"Turbo {cmd_name} => {resp.formatted_data}")
         else:
             self.main_app.log_message(f"Turbo {cmd_name} failed => {resp.error_message}")
 
-    # =================== Status Row "Retrieve" Methods ===================
+    # ========== Retrieve Methods for each Status row ==========
     def _retrieve_speed(self):
-        """
-        Manually queries only the speed parameter, updates self.speed_var, logs result.
-        """
         if not self._check_connected():
             return
         try:
@@ -341,14 +472,11 @@ class TurboFrame(ttk.Frame):
                 self.speed_var.set(resp.formatted_data)
                 self.main_app.log_message(f"Turbo read_speed => {resp.formatted_data}")
             else:
-                self.main_app.log_message(f"Turbo read_speed failed => {resp.error_message}")
+                self.main_app.log_message(f"Turbo read_speed => {resp.error_message}")
         except Exception as e:
             self.main_app.log_message(f"Turbo read_speed exception => {str(e)}")
 
     def _retrieve_temp(self):
-        """
-        Manually queries only the temperature parameter, updates self.temp_var, logs result.
-        """
         if not self._check_connected():
             return
         try:
@@ -358,14 +486,11 @@ class TurboFrame(ttk.Frame):
                 self.temp_var.set(resp.formatted_data)
                 self.main_app.log_message(f"Turbo read_temp => {resp.formatted_data}")
             else:
-                self.main_app.log_message(f"Turbo read_temp failed => {resp.error_message}")
+                self.main_app.log_message(f"Turbo read_temp => {resp.error_message}")
         except Exception as e:
             self.main_app.log_message(f"Turbo read_temp exception => {str(e)}")
 
     def _retrieve_load(self):
-        """
-        Manually queries only the load parameter, updates self.load_var, logs result.
-        """
         if not self._check_connected():
             return
         try:
@@ -375,67 +500,45 @@ class TurboFrame(ttk.Frame):
                 self.load_var.set(resp.formatted_data)
                 self.main_app.log_message(f"Turbo read_load => {resp.formatted_data}")
             else:
-                self.main_app.log_message(f"Turbo read_load failed => {resp.error_message}")
+                self.main_app.log_message(f"Turbo read_load => {resp.error_message}")
         except Exception as e:
             self.main_app.log_message(f"Turbo read_load exception => {str(e)}")
 
-    # =================== Cyclical Reading Methods ===================
+    # ========== Cyclical Reading Methods ==========
     def _toggle_cycle(self):
-        """
-        Called when user checks/unchecks "Enable Cyclical Updates".
-        If user checks it, we start a background thread.
-        If user unchecks it, we stop the thread.
-        """
         if self.cycle_var.get():
-            # Turn on cyc updates
             if not self._check_connected():
-                # If not connected, revert
                 self.cycle_var.set(False)
                 return
             self._start_cycle_thread()
         else:
-            # Turn off cyc updates
             self._stop_cycle_thread()
 
     def _apply_interval(self):
-        """
-        Called when user updates the interval and clicks "Apply."
-        If cyc updates are active, we restart the thread with the new interval.
-        """
         if self.cycle_var.get():
             self._stop_cycle_thread()
             self._start_cycle_thread()
 
     def _start_cycle_thread(self):
-        """
-        Launches a daemon thread that repeatedly queries selected parameters.
-        """
         self.stop_thread = False
-        self.status_thread = threading.Thread(target=self._cycle_read_loop, daemon=True)
+        self.status_thread = threading.Thread(target=self._cycle_loop, daemon=True)
         self.status_thread.start()
 
     def _stop_cycle_thread(self):
-        """
-        Stops the cyc read thread by setting stop_thread = True.
-        """
         self.stop_thread = True
         if self.status_thread and self.status_thread.is_alive():
             self.status_thread.join(timeout=1.0)
         self.status_thread = None
 
-    def _cycle_read_loop(self):
-        """
-        Worker function that repeatedly queries only the parameters whose cyc var is checked.
-        E.g. if speed_cyc is True, we do read_speed, etc.
-        """
+    def _cycle_loop(self):
         import time
+
         while not self.stop_thread and self.connected and self.turbo_communicator:
             try:
-                interval_ms = int(self.update_interval.get())
+                interval = int(self.update_interval.get())
             except ValueError:
-                interval_ms = 1000
+                interval = 1000
 
-            # Check each param's cyc var. If True, query it
             if self.speed_cyc.get():
                 self._retrieve_speed()
             if self.temp_cyc.get():
@@ -443,6 +546,6 @@ class TurboFrame(ttk.Frame):
             if self.load_cyc.get():
                 self._retrieve_load()
 
-            time.sleep(interval_ms / 1000.0)
+            time.sleep(interval / 1000.0)
 
-        # End of loop => thread done
+        # done
