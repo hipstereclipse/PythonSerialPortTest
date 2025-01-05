@@ -340,33 +340,29 @@ class GaugeApplication:
 
     def _create_turbo_window(self):
         """
-        Creates a Toplevel for the turbo interface, places a TurboFrame inside it,
-        and sets geometry near the main window's center-right.
-        """
+           Creates or shows the Turbo Controller window in a separate Toplevel.
+           This function ensures the Toplevel is titled "Turbo Controller"
+           and contains a TurboFrame that auto-resizes itself so nothing is cut off.
+           If already open, you can decide whether to bring it to front or do nothing.
+           """
+        # Optionally check if self.turbo_window already exists and is open.
+        # If so, we could just lift it. For simplicity, we'll always create a fresh one:
+
         self.turbo_window = tk.Toplevel(self.root)
         self.turbo_window.title("Turbo Controller")
 
-        # Instantiates the TurboFrame, passing 'self' so it can log to the OutputFrame
+        # We import your TurboFrame
+        from GUI.turbo_frame import TurboFrame
+
+        # Create the frame, passing self so it can log to OutputFrame
         turbo_frame = TurboFrame(self.turbo_window, self)
-        turbo_frame.pack(fill=tk.BOTH, expand=True)
 
-        # Position the new window near center-right of the main application window
-        self.root.update_idletasks()
-        main_x = self.root.winfo_x()
-        main_y = self.root.winfo_y()
-        main_w = self.root.winfo_width()
-        main_h = self.root.winfo_height()
+        # No forced geometry needed: turbo_frame._finalize_geometry() auto-sizes the window
+        # If you want a default position, you can do something like:
+        # self.turbo_window.geometry("+100+100")
 
-        offset_x = main_x + main_w + 50
-        offset_y = main_y + (main_h // 4)
-
-        window_width = 300
-        window_height = 380
-        self.turbo_window.geometry(f"{window_width}x{window_height}+{offset_x}+{offset_y}")
-
-        # If user manually closes this window, uncheck the "Turbo" checkbutton
+        # If user closes this Toplevel, we can do something if needed, e.g.:
         def on_turbo_close():
-            self.turbo_var.set(False)
             self.turbo_window.destroy()
             self.turbo_window = None
 
