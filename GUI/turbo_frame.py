@@ -123,6 +123,9 @@ class TurboFrame(ttk.Frame):
         if turbo_list:
             self.selected_turbo.set(turbo_list[0])
 
+        settings_btn = ttk.Button(row1, text="Settings", command=self._toggle_settings_frame)
+        settings_btn.pack(side=tk.LEFT, padx=5)
+
         # Row 2 => [status, connect, settings]
         row2 = ttk.Frame(self.conn_frame)
         row2.pack(fill=tk.X, padx=5, pady=2)
@@ -131,8 +134,6 @@ class TurboFrame(ttk.Frame):
         self.connect_btn = ttk.Button(row2, text="Connect", command=self._toggle_connection)
         self.connect_btn.pack(side=tk.LEFT, padx=5)
 
-        settings_btn = ttk.Button(row2, text="Settings", command=self._toggle_settings_frame)
-        settings_btn.pack(side=tk.LEFT, padx=5)
 
         # A container for the specialized settings frame if toggled
         self.settings_container = ttk.Frame(self.conn_frame)
@@ -287,7 +288,7 @@ class TurboFrame(ttk.Frame):
             self.settings_frame.pack(fill=tk.X, padx=5, pady=5)
 
             # Forces the conn_frame to a bigger size
-            self.conn_frame.config(width=500, height=150)
+            self.conn_frame.config(width=400, height=150)
             self.conn_frame.pack_propagate(False)
 
             # Recalc geometry
