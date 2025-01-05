@@ -1,13 +1,10 @@
 """
 turbo_frame.py
-Implements a compact TurboFrame for controlling a Turbo Pump (e.g. "TC600"),
-with the second row in the connection frame showing:
- [Connection Status] [Connect Button] [Settings Button].
-Toggling the TurboSerialSettingsFrame on/off forces the Toplevel to auto-resize
-to a minimal (or expanded) layout, re-centering on the right side of the main window.
+Creates a compact TurboFrame for controlling a Turbo Pump, with the second row in the
+connection frame showing [Status, Connect, Settings]. When toggling the TurboSerialSettingsFrame off,
+the conn_frame shrinks back to its original size by forcibly re-applying geometry logic.
 
-Additionally, the Parameter entry in the quick commands is disabled
-unless the command is in "Set" (!) state.
+We also disable the parameter entry unless the command is in "Set" (!) mode.
 """
 
 import tkinter as tk
@@ -17,53 +14,51 @@ import threading
 import queue
 import serial.tools.list_ports
 
-# Import your communicator approach
 from serial_communication.communicator.gauge_communicator import GaugeCommunicator
 from serial_communication.models import GaugeCommand, GaugeResponse
 
-# Import the specialized TurboSerialSettingsFrame
+# Adjust if your TurboSerialSettingsFrame is in a different path
 from .turbo_serial_settings_frame import TurboSerialSettingsFrame
 
 
 class TurboFrame(ttk.Frame):
     """
-    Main TurboFrame with:
-     - A 2-row connection frame:
-       Row 1: [Port: OptionMenu + Refresh] [Turbo: Combobox]
-       Row 2: [Status label, Connect button, Settings button]
-       Below row2 => toggled TurboSerialSettingsFrame
-     - A commands frame (manual + quick) with the Parameter entry disabled unless command_type is "!"
-     - A status frame for speed/temp/load
-     - A cyc update frame
-     - A geometry approach that resets Toplevel geometry to "" to let it auto-resize
-       each time we show/hide the settings frame, then re-centers on the right of main window.
+    A compact TurboFrame that:
+      - Has a second row with [Status, Connect, Settings]
+      - Toggling the settings frame on/off triggers an explicit geometry recalc so conn_frame shrinks or grows
+      - Disables the parameter entry in Quick Commands unless cmd_type_var == "!"
     """
 
     def __init__(self, parent, main_app):
+        """
+        parent: Toplevel or container
+        main_app: reference to the main application
+        """
         super().__init__(parent, relief=tk.RAISED, borderwidth=1)
 
+        # References
         self.parent = parent
         self.main_app = main_app
 
-        # Connection states
+        # Connection tracking
         self.connected = False
         self.turbo_communicator: Optional[GaugeCommunicator] = None
 
-        # Port and turbo selections
+        # Variables: Port, Turbo, Status
         self.selected_port = tk.StringVar(value="")
         self.selected_turbo = tk.StringVar(value="TC600")
         self.status_text = tk.StringVar(value="Disconnected")
 
-        # The toggled TurboSerialSettingsFrame
+        # A toggleable TurboSerialSettingsFrame
         self.settings_frame: Optional[TurboSerialSettingsFrame] = None
 
-        # cyc reading
+        # Cyc reading
         self.cycle_var = tk.BooleanVar(value=False)
         self.update_interval = tk.StringVar(value="1000")
         self.stop_thread = False
         self.status_thread: Optional[threading.Thread] = None
 
-        # status data
+        # Status data
         self.speed_var = tk.StringVar(value="---")
         self.speed_cyc = tk.BooleanVar(value=True)
         self.temp_var = tk.StringVar(value="---")
@@ -73,7 +68,6 @@ class TurboFrame(ttk.Frame):
 
         # Commands (manual + quick)
         self.manual_command_var = tk.StringVar()
-
         self.quick_cmd_var = tk.StringVar()
         self.cmd_type_var = tk.StringVar(value="?")  # "?" => Query, "!" => Set
         self.param_var = tk.StringVar()
@@ -82,23 +76,23 @@ class TurboFrame(ttk.Frame):
         # Build UI
         self._create_widgets()
 
-        # Auto-resize to minimal after creation
+        # After creation, finalize geometry
         self._finalize_geometry()
 
     def _create_widgets(self):
         """
         Builds 4 main sections:
-         1) Turbo Connection (row1 => port + refresh + turbo, row2 => status, connect, settings)
-            Below row2 => container for the settings frame
-         2) Turbo Commands (manual + quick)
-         3) Status
-         4) Cyc update
+          1) Connection frame (2 rows => row1: port etc., row2: [status, connect, settings]),
+             plus container below for TurboSerialSettingsFrame
+          2) Turbo Commands (manual + quick)
+          3) Status
+          4) Cyc updates
         """
-        # (1) Turbo Connection
+        # (1) Connection
         conn_frame = ttk.LabelFrame(self, text="Turbo Connection")
         conn_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # Row 1 => "Port:", port menu + Refresh, "Turbo:", turbo combo
+        # row1 => "Port:" + OptionMenu + Refresh, "Turbo:" + combobox
         row1 = ttk.Frame(conn_frame)
         row1.pack(fill=tk.X, padx=5, pady=2)
 
@@ -110,14 +104,19 @@ class TurboFrame(ttk.Frame):
         refresh_btn.pack(side=tk.LEFT, padx=5)
 
         ttk.Label(row1, text="Turbo:").pack(side=tk.LEFT, padx=5)
-        turbos = ["TC600","TC1200","TC700"]
-        self.turbo_combo = ttk.Combobox(row1, textvariable=self.selected_turbo,
-                                        values=turbos, state="readonly", width=10)
+        turbo_list = ["TC600", "TC1200", "TC700"]
+        self.turbo_combo = ttk.Combobox(
+            row1,
+            textvariable=self.selected_turbo,
+            values=turbo_list,
+            state="readonly",
+            width=10
+        )
         self.turbo_combo.pack(side=tk.LEFT, padx=5)
-        if turbos:
-            self.selected_turbo.set(turbos[0])
+        if turbo_list:
+            self.selected_turbo.set(turbo_list[0])
 
-        # Row 2 => [Status, Connect, Settings]
+        # row2 => [Status, Connect, Settings]
         row2 = ttk.Frame(conn_frame)
         row2.pack(fill=tk.X, padx=5, pady=2)
 
@@ -128,11 +127,11 @@ class TurboFrame(ttk.Frame):
         settings_btn = ttk.Button(row2, text="Settings", command=self._toggle_settings_frame)
         settings_btn.pack(side=tk.LEFT, padx=5)
 
-        # container for the specialized TurboSerialSettingsFrame
+        # container for the specialized settings frame below row2
         self.settings_container = ttk.Frame(conn_frame)
         self.settings_container.pack(fill=tk.X, padx=5, pady=5)
 
-        # (2) Turbo Commands (manual + quick)
+        # (2) Turbo Commands
         cmd_frame = ttk.LabelFrame(self, text="Turbo Commands")
         cmd_frame.pack(fill=tk.X, padx=5, pady=5)
 
@@ -171,9 +170,10 @@ class TurboFrame(ttk.Frame):
         self.query_radio.pack(side=tk.LEFT, padx=2)
         self.set_radio.pack(side=tk.LEFT, padx=2)
 
-        # We attach a trace to cmd_type_var so we can enable/disable param entry
+        # We'll attach a trace to enable/disable param entry
         self.cmd_type_var.trace("w", self._update_param_state)
 
+        # Parameter row
         param_frame = ttk.Frame(cmd_frame)
         param_frame.pack(fill=tk.X, padx=5, pady=5)
 
@@ -187,7 +187,7 @@ class TurboFrame(ttk.Frame):
         self.desc_label = ttk.Label(cmd_frame, textvariable=self.desc_var, wraplength=400)
         self.desc_label.pack(fill=tk.X, padx=5, pady=5)
 
-        # Initially call _update_param_state so the param entry is correct if default is "?"
+        # Initialize param state
         self._update_param_state()
 
         # (3) Status frame
@@ -204,21 +204,14 @@ class TurboFrame(ttk.Frame):
 
         cyc_row1 = ttk.Frame(cyc_frame)
         cyc_row1.pack(fill=tk.X, padx=5, pady=2)
-
-        cyc_chk = ttk.Checkbutton(
-            cyc_row1,
-            text="Enable Cyclical Updates",
-            variable=self.cycle_var,
-            command=self._toggle_cycle
-        )
+        cyc_chk = ttk.Checkbutton(cyc_row1, text="Enable Cyclical Updates",
+                                  variable=self.cycle_var, command=self._toggle_cycle)
         cyc_chk.pack(side=tk.LEFT, padx=5)
 
         cyc_row2 = ttk.Frame(cyc_frame)
         cyc_row2.pack(fill=tk.X, padx=5, pady=2)
-
         ttk.Label(cyc_row2, text="Update Interval (ms):").pack(side=tk.LEFT, padx=5)
         ttk.Entry(cyc_row2, textvariable=self.update_interval, width=6).pack(side=tk.LEFT, padx=5)
-
         apply_btn = ttk.Button(cyc_row2, text="Apply", command=self._apply_interval)
         apply_btn.pack(side=tk.LEFT, padx=5)
 
@@ -254,12 +247,12 @@ class TurboFrame(ttk.Frame):
         else:
             self.selected_port.set("")
 
-    # ========== Param state updating ==========
+    # ========== Param state enabling/disabling ==========
 
     def _update_param_state(self, *args):
         """
-        Called whenever cmd_type_var changes.
-        If it's "!", we enable the param entry. If it's "?", we disable it.
+        Disables the parameter entry if cmd_type_var == "?"
+        Enables it if cmd_type_var == "!"
         """
         if self.cmd_type_var.get() == "!":
             self.param_entry.config(state="normal")
@@ -269,25 +262,37 @@ class TurboFrame(ttk.Frame):
     # ========== Toggling TurboSerialSettingsFrame ==========
 
     def _toggle_settings_frame(self):
+        """
+        If the settings frame is showing, remove it, then forcibly recalc geometry so the
+        'conn_frame' shrinks. If we enable it, recalc so it grows.
+        """
         if self.settings_frame:
-            # Destroy => shrink layout
+            # 1) pack_forget
+            self.settings_frame.pack_forget()
+            # 2) destroy
             self.settings_frame.destroy()
             self.settings_frame = None
+
+            # 3) forcibly recalc geometry
             self._finalize_geometry()
             return
 
-        # Create => expand layout
-        self.settings_frame = TurboSerialSettingsFrame(self.settings_container, self._on_turbo_settings_apply)
+        # Otherwise create and pack
+        self.settings_frame = TurboSerialSettingsFrame(
+            parent=self.settings_container,
+            apply_callback=self._on_turbo_settings_apply
+        )
         self.settings_frame.pack(fill=tk.X, padx=5, pady=5)
+
         self._finalize_geometry()
 
     def _on_turbo_settings_apply(self, settings: dict):
         if self.turbo_communicator and self.turbo_communicator.ser and self.turbo_communicator.ser.is_open:
             try:
-                self.turbo_communicator.ser.baudrate  = settings["baudrate"]
-                self.turbo_communicator.ser.bytesize  = settings["bytesize"]
-                self.turbo_communicator.ser.parity    = settings["parity"]
-                self.turbo_communicator.ser.stopbits  = settings["stopbits"]
+                self.turbo_communicator.ser.baudrate = settings["baudrate"]
+                self.turbo_communicator.ser.bytesize = settings["bytesize"]
+                self.turbo_communicator.ser.parity   = settings["parity"]
+                self.turbo_communicator.ser.stopbits = settings["stopbits"]
                 self.main_app.log_message(f"Turbo serial settings updated: {settings}")
             except Exception as e:
                 self.main_app.log_message(f"Failed to update Turbo serial settings: {str(e)}")
@@ -373,10 +378,9 @@ class TurboFrame(ttk.Frame):
         if not quick_val:
             self.main_app.log_message("No quick command selected.")
             return
-
-        # e.g. "start_pump - Start turbo"
         cmd_name = quick_val.split(" - ")[0]
-        command_type = self.cmd_type_var.get()
+
+        command_type = self.cmd_type_var.get()  # "?" or "!"
         param_value = self.param_var.get().strip()
 
         try:
@@ -400,7 +404,7 @@ class TurboFrame(ttk.Frame):
         else:
             self.main_app.log_message(f"Turbo {cmd_name} failed => {resp.error_message}")
 
-    # ========== Retrieve (Status Rows) ==========
+    # ========== Retrieve (Status rows) ==========
 
     def _retrieve_speed(self):
         if not self._check_connected():
@@ -444,7 +448,7 @@ class TurboFrame(ttk.Frame):
         except Exception as e:
             self.main_app.log_message(f"Turbo read_load exception => {str(e)}")
 
-    # ========== Cyc Reading ==========
+    # ========== Cyc reading ==========
 
     def _toggle_cycle(self):
         if self.cycle_var.get():
@@ -492,21 +496,27 @@ class TurboFrame(ttk.Frame):
 
     def _finalize_geometry(self):
         """
-        Re-check geometry to allow Toplevel to auto-size tightly,
-        then re-center on the right side of the main window.
-        This is called after toggling settings or initial build.
+        After building or toggling the settings frame, forcibly shrinks or expands
+        the Toplevel by resetting geometry to "" so it auto-calculates minimal size,
+        then repositions on the right side of the main window.
         """
         if isinstance(self.parent, tk.Toplevel):
-            # Let geometry manager auto-fit
-            # Setting geometry("") tells Tk to recalc minimal size
-            self.parent.geometry("")
+            # Force geometry manager to recalc in the container frames
+            self.settings_container.update_idletasks()
+            self.update_idletasks()
             self.parent.update_idletasks()
 
-            # Now measure the new final size
+            # 1) Reset geometry to "" => let Toplevel auto-size to minimal
+            self.parent.geometry("")
+
+            # 2) Let geometry settle
+            self.parent.update_idletasks()
+
+            # Now measure final width/height
             w = self.parent.winfo_width()
             h = self.parent.winfo_height()
 
-            # Re-center on right side
+            # center-right
             main_x = self.main_app.root.winfo_x()
             main_y = self.main_app.root.winfo_y()
             main_w = self.main_app.root.winfo_width()
