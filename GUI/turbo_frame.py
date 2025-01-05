@@ -151,7 +151,7 @@ class TurboFrame(ttk.Frame):
         manual_entry.pack(side=tk.LEFT, padx=5, fill=tk.X, expand=True)
 
         manual_send_btn = ttk.Button(manual_frame, text="Send", command=self._send_manual_command)
-        manual_send_btn.pack(side=tk.LEFT, padx=5)
+        manual_send_btn.pack(side=tk.RIGHT, padx=5)
 
         # Quick commands
         quick_frame = ttk.LabelFrame(cmd_frame, text="Quick Commands")
@@ -187,7 +187,7 @@ class TurboFrame(ttk.Frame):
         self.param_entry.pack(side=tk.LEFT, padx=5)
 
         quick_send_btn = ttk.Button(param_frame, text="Send", command=self._send_quick_command)
-        quick_send_btn.pack(side=tk.LEFT, padx=5)
+        quick_send_btn.pack(side=tk.RIGHT, padx=5)
 
         self.desc_label = ttk.Label(cmd_frame, textvariable=self.desc_var, wraplength=400)
         self.desc_label.pack(fill=tk.X, padx=5, pady=5)
@@ -243,7 +243,7 @@ class TurboFrame(ttk.Frame):
         val_lbl.pack(side=tk.LEFT, padx=5)
 
         rtv_btn = ttk.Button(row, text="Retrieve", command=retrieve_callback)
-        rtv_btn.pack(side=tk.LEFT, padx=5)
+        rtv_btn.pack(side=tk.RIGHT, padx=5)
 
     # ========== Updating param entry state ==========
     def _update_param_state(self, *args):
