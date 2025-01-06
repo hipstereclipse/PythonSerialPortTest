@@ -9,6 +9,7 @@ from typing import Optional                    # Imports Optional for type hinti
 import serial                                  # Imports pySerial for serial port handling
 import serial.tools.list_ports                # Imports list_ports if needed
 
+
 # Imports the gauge protocol and protocol factory
 from serial_communication.gauges.protocols.gauge_protocol import GaugeProtocol
 from serial_communication.gauges.protocols.ppg_protocol import PPGProtocol
@@ -20,7 +21,7 @@ from serial_communication.config import GAUGE_PARAMETERS, GAUGE_OUTPUT_FORMATS, 
 from serial_communication.models import GaugeCommand, GaugeResponse
 
 # Imports the protocol factory so we can get a protocol instance for each gauge type
-from .protocol_factory import get_protocol
+from serial_communication.communicator.protocol_factory import get_protocol
 
 
 class GaugeCommunicator:

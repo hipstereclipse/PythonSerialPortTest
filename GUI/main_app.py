@@ -248,12 +248,14 @@ class GaugeApplication:
         self.turbo_check.pack(side=tk.LEFT, padx=5)
 
         # === Serial Settings Frame ===
+        # Creates and configures serial settings frame
         self.serial_frame = SerialSettingsFrame(
             self.root,
             self.apply_serial_settings,
             self.send_manual_command
         )
-        self.serial_frame.set_logger(self)
+        # Sets parent reference for logging
+        self.serial_frame.set_parent(self)
         self.serial_frame.pack(fill=tk.X, padx=5, pady=5)
 
         # === Command Frame ===
