@@ -228,8 +228,8 @@ class TurboFrame(ttk.Frame):
         self._build_status_row(status_frame, "Motor Temp (C):",        self.temp_var,        self.temp_cyc,          self._retrieve_temp)
         self._build_status_row(status_frame, "Electronics Temp (C):",  self.temp_electr_var, self.temp_electr_cyc,   self._retrieve_temp_electronics)
         self._build_status_row(status_frame, "Bearing Temp (C):",      self.temp_bearing_var,self.temp_bearing_cyc,  self._retrieve_temp_bearing)
-        self._build_status_row(status_frame, "Error Code:",            self.error_code_var,  self.error_code_cyc,    self._retrieve_error_code)
         self._build_status_row(status_frame, "Warning Code:",          self.warning_code_var,self.warning_code_cyc,  self._retrieve_warning_code)
+        self._build_status_row(status_frame, "Error Code:",            self.error_code_var,  self.error_code_cyc,    self._retrieve_error_code)
         self._build_status_row(status_frame, "Operating Hours:",       self.hours_var,       self.hours_cyc,         self._retrieve_hours)
 
         # ========== Cyc Frame ==========
