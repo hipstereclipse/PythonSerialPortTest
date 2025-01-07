@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#main.py
 """
 Main entry point for the Gauge Communication Program.
 Initializes the GUI and starts the application.

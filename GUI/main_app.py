@@ -636,35 +636,68 @@ class GaugeApplication:
         if self.communicator and self.communicator.ser:
             ser = self.communicator.ser
             s = f"""
-=== Port Settings ===
-Port: {ser.port}
-Baudrate: {ser.baudrate}
-Bytesize: {ser.bytesize}
-Parity: {ser.parity}
-Stopbits: {ser.stopbits}
-Timeout: {ser.timeout}
-XonXoff: {ser.xonxoff}
-RtsCts: {ser.rtscts}
-DsrDtr: {ser.dsrdtr}
-"""
+                === Port Settings ===
+                Port: {ser.port}
+                Baudrate: {ser.baudrate}
+                Bytesize: {ser.bytesize}
+                Parity: {ser.parity}
+                Stopbits: {ser.stopbits}
+                Timeout: {ser.timeout}
+                XonXoff: {ser.xonxoff}
+                RtsCts: {ser.rtscts}
+                DsrDtr: {ser.dsrdtr}
+                """
             self.log_message(s)
         else:
             self.log_message("Not connected - showing saved settings:")
             s = f"""
-=== Saved Settings ===
-Baudrate: {self.current_serial_settings['baudrate']}
-Bytesize: {self.current_serial_settings['bytesize']}
-Parity: {self.current_serial_settings['parity']}
-Stopbits: {self.current_serial_settings['stopbits']}
-RS485 Mode: {self.current_serial_settings.get('rs485_mode', False)}
-RS485 Address: {self.current_serial_settings.get('rs485_address', 254)}
-"""
+                === Saved Settings ===
+                Baudrate: {self.current_serial_settings['baudrate']}
+                Bytesize: {self.current_serial_settings['bytesize']}
+                Parity: {self.current_serial_settings['parity']}
+                Stopbits: {self.current_serial_settings['stopbits']}
+                RS485 Mode: {self.current_serial_settings.get('rs485_mode', False)}
+                RS485 Address: {self.current_serial_settings.get('rs485_address', 254)}
+                """
             self.log_message(s)
 
-    def log_message(self, message: str):
+    def log_message(self, message: str, level: str = "INFO"):
+        """
+        Logs the given message at the desired logging level,
+        then appends it to the output text area with a timestamp.
+
+        message: The string to log/display.
+        level: The logging severity (e.g., "INFO", "ERROR", "DEBUG").
+        """
+
+        # Imports datetime for a nicely formatted timestamp
         from datetime import datetime
+
+        # Creates a timestamp string for the log line
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        self.output_frame.append_log(f"[{now}] {message}")
+
+        # Decides how to log internally based on the level
+        if level.upper() == "ERROR":
+            self.logger.error(message)
+        elif level.upper() == "DEBUG":
+            self.logger.debug(message)
+        else:
+            # Defaults to INFO
+            self.logger.info(message)
+
+        # Appends the message to the GUI's output frame, labeling it with the timestamp and level
+        # (Feel free to tweak formatting to your preference)
+        self.output_frame.append_log(f"[{now}] [{level}] {message}")
+
+    def error(self, msg: str):
+        """
+        Called when code does self.logger.error(msg).
+        We'll log at ERROR level internally, and also show in the GUI.
+        """
+        # 1) Log at the app's Python logger
+        self.logger.error(msg)
+        # 2) Also display it in the GUI as an error
+        self.log_message(msg, level="ERROR")
 
     def debug(self, message: str):
         if self.logger.isEnabledFor(logging.DEBUG):

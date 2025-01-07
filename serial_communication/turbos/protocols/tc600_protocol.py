@@ -22,94 +22,107 @@ class TC600Protocol(TurboProtocol):
         self.current_command = None
 
     def _initialize_commands(self):
-        """Loads complete set of TC600 command definitions"""
+        """
+        Initializes the dictionary of TC600 command definitions.
+        Each dictionary key is the command name you will use externally (e.g., "read_speed").
+        Each value is another dictionary containing parameters like:
+          - pid      : The parameter ID in the device's protocol
+          - desc     : A short description of what this command does
+          - type     : The data type expected (e.g., "u_integer", "u_real", "boolean_old", or "string")
+          - write    : A boolean indicating if this command supports writing (True) or read-only (False)
+          - options  : (Optional) A list of allowed string values if you want enumerated choices
+          - min, max : (Optional) Numeric limits if the command takes an integer or float
+          - unit     : (Optional) A string describing the unit (e.g., "A" for amps, "°C" for Celsius)
+        """
+
+        # Creates a dictionary to store all TC600 commands
         self._command_defs = {
-            # Motor control commands
+
+            # Reads the current rotation speed in rpm
+            "get_speed": {
+                "pid": 309,  # Uses PID 309 (from device docs) to read the speed
+                "desc": "Read turbo rotation speed (rpm)",
+                "type": "u_integer"  # 'u_integer' means an unsigned integer
+            },
+
+            # Sets the rotation speed (as a percentage of maximum)
+            "set_speed": {
+                "pid": 308,  # Device docs say PID 308 sets speed
+                "desc": "Set the turbo rotation speed (percent of max)",
+                "type": "u_integer",  # Expects an integer
+                "write": True,  # Because we can write to it
+                "min": 0,  # 0% speed means off
+                "max": 100,  # 100% means full speed
+                "unit": "%"  # Just labeling that the value is in percent
+            },
+
+            # Reads the motor current (in amps)
+            "get_current": {
+                "pid": 310,
+                "desc": "Read motor current (A)",
+                "type": "u_real",  # 'u_real' means an unsigned real number
+                "unit": "A"  # Amps
+            },
+
+            # Turns the motor on/off (boolean style command)
             "motor_on": {
                 "pid": 23,
-                "desc": "Switch motor/pump on/off",
-                "type": "boolean_old",
-                "write": True,
-                "options": ["0", "1"],
+                "desc": "Switch motor/pump on or off",
+                "type": "boolean_old",  # 'boolean_old' is a custom format (like '111111' for On, '000000' for Off)
+                "write": True,  # We can write to toggle on/off
+                "options": ["0", "1"],  # If you prefer to interpret 0/1
                 "option_desc": ["Off", "On"]
             },
 
-            # Speed commands
-            "get_speed": {
-                "pid": 309,
-                "desc": "Get actual rotation speed (rpm)",
-                "type": "u_integer"
-            },
-            "set_speed": {
-                "pid": 308,
-                "desc": "Set rotation speed (percentage)",
-                "type": "u_integer",
-                "write": True,
-                "min": 0,
-                "max": 100,
-                "unit": "%"
-            },
-            "standby_speed": {
-                "pid": 707,
-                "desc": "Set standby rotation speed",
-                "type": "u_integer",
-                "write": True,
-                "min": 0,
-                "max": 100,
-                "unit": "%"
-            },
-
-            # Temperature monitoring
+            # Reads the electronics temperature in °C
             "get_temp_electronic": {
                 "pid": 326,
-                "desc": "Read electronics temperature",
+                "desc": "Read electronics temperature (°C)",
                 "type": "u_integer",
                 "unit": "°C"
             },
+
+            # Reads the motor temperature in °C
             "get_temp_motor": {
                 "pid": 330,
-                "desc": "Read motor temperature",
+                "desc": "Read motor temperature (°C)",
                 "type": "u_integer",
                 "unit": "°C"
             },
+
+            # Reads the bearing temperature in °C
             "get_temp_bearing": {
                 "pid": 342,
-                "desc": "Read bearing temperature",
+                "desc": "Read bearing temperature (°C)",
                 "type": "u_integer",
                 "unit": "°C"
             },
 
-            # Current monitoring
-            "get_current": {
-                "pid": 310,
-                "desc": "Read motor current",
-                "type": "u_real",
-                "unit": "A"
-            },
-
-            # Error handling
+            # Reads any current error codes from the pump
             "get_error": {
                 "pid": 303,
                 "desc": "Read current error code",
                 "type": "u_integer"
             },
+
+            # Reads any current warnings or non-critical notices
             "get_warning": {
                 "pid": 305,
-                "desc": "Read warning status",
+                "desc": "Read current warning status",
                 "type": "u_integer"
             },
 
-            # Operating hours
+            # Reads total operating hours on the pump
             "operating_hours": {
                 "pid": 311,
                 "desc": "Read total operating hours",
                 "type": "u_integer"
             },
 
-            # Configuration
+            # Sets maximum run-up time (in seconds)
             "set_runup_time": {
                 "pid": 700,
-                "desc": "Set maximum run-up time",
+                "desc": "Set maximum run-up time before reaching nominal speed",
                 "type": "u_integer",
                 "write": True,
                 "unit": "sec",
@@ -117,7 +130,7 @@ class TC600Protocol(TurboProtocol):
                 "max": 1200
             },
 
-            # Venting control
+            # Controls venting valve mode (closed, controlled, or open)
             "vent_mode": {
                 "pid": 30,
                 "desc": "Set venting valve mode",
@@ -126,9 +139,11 @@ class TC600Protocol(TurboProtocol):
                 "options": ["0", "1", "2"],
                 "option_desc": ["Closed", "Controlled", "Open"]
             },
+
+            # Sets venting time (in seconds)
             "vent_time": {
                 "pid": 721,
-                "desc": "Set venting time",
+                "desc": "Set venting duration (seconds)",
                 "type": "u_integer",
                 "write": True,
                 "unit": "sec",
@@ -136,38 +151,44 @@ class TC600Protocol(TurboProtocol):
                 "max": 3600
             },
 
-            # System information
+            # Reads the firmware version string
             "firmware_version": {
                 "pid": 312,
-                "desc": "Read firmware version",
+                "desc": "Read firmware version string",
                 "type": "string"
             },
+
+            # Reads the pump type (e.g. "TC600", "TC1200")
             "pump_type": {
                 "pid": 369,
                 "desc": "Read pump type",
                 "type": "string"
             },
 
-            # Communication settings
+            # Allows changing the station address (1..255) for RS485
             "station_number": {
                 "pid": 797,
-                "desc": "Set station number",
+                "desc": "Set station number/address",
                 "type": "u_integer",
                 "write": True,
                 "min": 1,
                 "max": 255
             },
+
+            # Allows changing the baud rate (e.g., 9600, 19200, 38400)
             "baud_rate": {
                 "pid": 798,
-                "desc": "Set baud rate",
+                "desc": "Set communication baud rate",
                 "type": "u_integer",
                 "write": True,
                 "options": ["9600", "19200", "38400"],
                 "option_desc": ["9600 baud", "19200 baud", "38400 baud"]
             },
+
+            # Lets you switch between RS232 or RS485
             "interface_type": {
                 "pid": 794,
-                "desc": "Set interface type",
+                "desc": "Set interface type (RS232 or RS485)",
                 "type": "u_integer",
                 "write": True,
                 "options": ["0", "1"],
