@@ -162,10 +162,15 @@ class TurboFrame(ttk.Frame):
         self.quick_cmd_combo = ttk.Combobox(
             quick_frame,
             textvariable=self.quick_cmd_var,
-            values=["start_pump - Start turbo",
-                    "stop_pump - Stop turbo",
-                    "vent - Vent turbo",
-                    "read_speed - Read speed"],
+            values=[
+                "start_pump - Start turbo",
+                "stop_pump - Stop turbo",
+                "vent - Vent turbo",
+                "read_speed - Read speed",
+                "read_temp - Read temperature",
+                "read_current - Read current",
+                "read_error - Read error status"
+            ],
             state="readonly",
             width=30
         )
