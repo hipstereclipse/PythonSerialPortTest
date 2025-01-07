@@ -219,7 +219,7 @@ class TurboFrame(ttk.Frame):
         self.desc_label.pack(fill=tk.X, padx=5, pady=5)
 
         # ========== Status Frame ==========
-        status_frame = ttk.LabelFrame(self, text="Turbo Status (Extended)")
+        status_frame = ttk.LabelFrame(self, text="Turbo Status")
         status_frame.pack(fill=tk.X, padx=5, pady=5)
 
         # Reuse a helper to build rows
