@@ -17,7 +17,7 @@ import logging
 
 class TurboProtocol(ABC):
     """
-    Abstract base class for turbo pump protocols.
+    Abstract base class defining the interface for turbo pump protocols.
     """
 
     def __init__(self, address: int = 254, logger: Optional[logging.Logger] = None):
@@ -36,9 +36,7 @@ class TurboProtocol(ABC):
 
     @abstractmethod
     def _initialize_commands(self) -> None:
-        """
-        Loads device-specific command definitions.
-        """
+        """Loads device-specific command definitions."""
         pass
 
     @abstractmethod
@@ -47,7 +45,7 @@ class TurboProtocol(ABC):
         Creates a command frame for a given turbo command.
 
         Args:
-            command: The turbo command object.
+            command: The turbo command to serialize.
 
         Returns:
             bytes: The serialized command frame.
@@ -72,10 +70,10 @@ class TurboProtocol(ABC):
         Calculates a CRC16-CCITT checksum.
 
         Args:
-            data (bytes): The data for which to calculate the checksum.
+            data (bytes): The input data.
 
         Returns:
-            int: The 16-bit CRC checksum.
+            int: The 16-bit checksum.
         """
         crc = 0xFFFF
         for byte in data:
@@ -90,9 +88,9 @@ class TurboProtocol(ABC):
 
     def set_rs485_mode(self, enabled: bool) -> None:
         """
-        Sets RS485 mode.
+        Enables or disables RS485 mode.
 
         Args:
-            enabled (bool): True to enable RS485; False for RS232.
+            enabled (bool): True for RS485, False for RS232.
         """
         self.rs485_mode = enabled

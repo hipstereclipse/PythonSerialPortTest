@@ -2,7 +2,7 @@
 """
 gauge_protocol.py
 
-This module defines the abstract base class for gauge protocols. All gauge-specific
+This module defines the abstract base class for gauge protocols. All gauge‐specific
 protocol implementations must inherit from this class and implement methods for:
   - Initializing command definitions.
   - Creating command frames.

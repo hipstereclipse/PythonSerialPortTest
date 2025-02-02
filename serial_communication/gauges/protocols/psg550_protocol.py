@@ -20,7 +20,7 @@ class PSG550Protocol(GaugeProtocol):
 
     def __init__(self, address: int = 254, logger: Optional[Any] = None):
         super().__init__(address, logger)
-        self.device_id = 0x02  # Device ID for PSG550
+        self.device_id = 0x02  # PSG550 device identifier
 
     def _initialize_commands(self) -> None:
         """

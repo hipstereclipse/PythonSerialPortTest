@@ -4,15 +4,17 @@ tc600_protocol.py
 
 Implements the protocol for the TC600 turbo pump controller.
 Handles command creation, parameter encoding, response parsing, and error handling.
-Commands are formatted as ASCII strings with a checksum and terminator.
+Commands are formatted as ASCII strings with a checksum and terminated by a carriage return.
 """
 
 import struct
 from typing import Dict, Any, Optional, List
 import logging
+import time
 
 from serial_communication.turbos.protocols.turbo_protocol import TurboProtocol
 from serial_communication.models import TurboCommand, TurboResponse
+
 
 class TC600Protocol(TurboProtocol):
     """
@@ -34,7 +36,8 @@ class TC600Protocol(TurboProtocol):
     def _initialize_commands(self) -> None:
         """
         Initializes a dictionary of TC600 command definitions.
-        Each definition includes the parameter ID (pid), a description, data type, and flags for read/write.
+        Each definition includes the parameter ID (pid), description, data type,
+        and flags indicating whether the command is readable or writable.
         """
         self._command_defs = {
             "get_speed": {
@@ -183,7 +186,6 @@ class TC600Protocol(TurboProtocol):
         cmd_info = self._command_defs[command.name]
         self.current_command = command.name
 
-        # Format the address (always 3 digits in RS485 mode; else default "254")
         addr = f"{self.address:03d}"
         action = "10" if command.command_type == "!" else "00"
         param = f"{cmd_info['pid']:03d}"
@@ -196,7 +198,6 @@ class TC600Protocol(TurboProtocol):
         else:
             msg = f"{addr}{action}{param}02=?"
 
-        # Calculate checksum as the sum of the ASCII values modulo 256.
         checksum = sum(msg.encode("ascii")) % 256
         msg = f"{msg}{checksum:03d}\r"
         return msg.encode("ascii")
@@ -209,7 +210,7 @@ class TC600Protocol(TurboProtocol):
             response (bytes): The raw response.
 
         Returns:
-            dict: Parsed response data.
+            dict: A dictionary containing parsed response data.
         """
         try:
             resp_str = response.decode("ascii").strip()
@@ -235,14 +236,14 @@ class TC600Protocol(TurboProtocol):
 
     def _encode_value(self, value: Any, data_type: str) -> str:
         """
-        Encodes a value for a write command into a fixed-width string based on its type.
+        Encodes a parameter value into the TC600 format.
 
         Args:
             value: The value to encode.
-            data_type (str): The type of the value (e.g., "boolean_old", "u_integer", "u_real", "string").
+            data_type (str): The expected data type (e.g., "boolean_old", "u_integer", "u_real", "string").
 
         Returns:
-            str: The encoded value as a string.
+            str: The encoded value as a fixed-width string.
 
         Raises:
             ValueError: If the data type is unsupported.
@@ -264,7 +265,7 @@ class TC600Protocol(TurboProtocol):
         Formats the response data based on the current command.
 
         Args:
-            data (str): The raw data string from the response.
+            data (str): The raw data string extracted from the response.
 
         Returns:
             str: A formatted string including units if applicable.

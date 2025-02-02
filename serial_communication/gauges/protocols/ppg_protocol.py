@@ -3,8 +3,8 @@
 ppg_protocol.py
 
 Implements the protocol for PPG550/PPG570 MEMS Pirani & Piezo gauges.
-These devices use an ASCII-based protocol. Commands are built as ASCII strings and
-responses are parsed from ASCII text.
+These devices use an ASCII-based protocol; commands are built as ASCII strings
+and responses are parsed from ASCII text.
 
 Usage Example:
     protocol = PPGProtocol(address=254, gauge_type="PPG550")
@@ -29,11 +29,11 @@ class PPGProtocol(GaugeProtocol):
 
         Args:
             address (int): The device address.
-            gauge_type (str): Either "PPG550" or "PPG570".
+            gauge_type (str): "PPG550" or "PPG570".
             logger (Optional[Any]): Logger instance.
         """
         self.gauge_type = gauge_type
-        # PPG570 devices have an additional atmospheric sensor.
+        # PPG570 devices have an atmospheric sensor.
         self.has_atm = (gauge_type == "PPG570")
         super().__init__(address, logger)
         self.logger.debug(f"Initialized {self.gauge_type} protocol handler with ATM sensor: {self.has_atm}")
@@ -73,7 +73,7 @@ class PPGProtocol(GaugeProtocol):
         cmd_info = self._command_defs.get(command.name)
         if not cmd_info:
             raise ValueError(f"Unknown command: {command.name}")
-        # If using RS485, format the address as a three-digit number; otherwise, default to "254"
+        # Format address: if RS485 is active, use 3-digit address; else default to "254"
         addr = f"{self.address:03d}" if self.rs485_mode else "254"
         cmd_type = "!" if command.command_type in ["!", "write"] else "?"
         cmd_str = f"@{addr}{cmd_info['cmd']}{cmd_type}"
@@ -91,16 +91,16 @@ class PPGProtocol(GaugeProtocol):
         Expected responses start with '@' and end with ';FF'.
 
         Args:
-            response (bytes): The raw response bytes.
+            response (bytes): The raw response.
 
         Returns:
             GaugeResponse: The parsed response.
         """
         try:
             resp_str = response.decode("ascii", errors="replace").strip()
-            self.logger.debug(f"Parsing PPG response: {resp_str}")
+            self.logger.debug(f"Parsing response: {resp_str}")
             if resp_str.startswith("@NAK"):
-                error_msg = resp_str[4:].strip() or "Command failed"
+                error_msg = resp_str[4:].strip() or "Unknown error"
                 return GaugeResponse(
                     raw_data=response,
                     formatted_data=error_msg,
@@ -121,7 +121,7 @@ class PPGProtocol(GaugeProtocol):
                 error_message="Invalid response format"
             )
         except Exception as e:
-            self.logger.error(f"PPG response parse error: {str(e)}")
+            self.logger.error(f"Response parse error: {str(e)}")
             return GaugeResponse(
                 raw_data=response if response else b"",
                 formatted_data="",
@@ -131,10 +131,10 @@ class PPGProtocol(GaugeProtocol):
 
     def test_commands(self) -> List[bytes]:
         """
-        Generates a list of test commands for PPG gauges.
+        Generates a small set of ASCII test commands to verify connectivity.
 
         Returns:
-            List[bytes]: A list of ASCII command frames.
+            List[bytes]: A list of command frames.
         """
         commands = [
             self.create_command(GaugeCommand(name="software_version", command_type="?")),

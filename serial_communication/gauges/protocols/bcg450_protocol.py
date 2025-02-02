@@ -14,9 +14,8 @@ Usage Example:
 """
 
 import struct
-import logging
 from typing import Dict, Any, List, Optional
-
+import logging
 from serial_communication.models import GaugeCommand, GaugeResponse
 from serial_communication.gauges.protocols.gauge_protocol import GaugeProtocol
 
@@ -129,7 +128,7 @@ class BCG450Protocol(GaugeProtocol):
 
         if command.command_type == "!" and cmd_info.get("parameters", False):
             value = command.parameters.get("value", 0)
-            # Here we assume a single-byte parameter; conversion can be extended as needed.
+            # Here we assume a single-byte parameter; extend conversion as needed.
             msg.extend([int(value) & 0xFF])
             msg[3] = len(msg) - 4
 
@@ -158,7 +157,7 @@ class BCG450Protocol(GaugeProtocol):
                     formatted_data=response.hex(' ').upper(),
                     success=True
                 )
-            # (For demonstration, we simply pass the entire response as meaningful.)
+            # For demonstration, we simply pass the entire response as meaningful.
             data = response
             parsed_result = self._parse_command_response(data)
             return GaugeResponse(
@@ -210,14 +209,14 @@ class BCG450Protocol(GaugeProtocol):
 
     def _create_error_response(self, message: str, response: bytes) -> GaugeResponse:
         """
-        Helper method to create a standardized error response.
+        Creates a standardized error response.
 
         Args:
             message (str): The error message.
-            response (bytes): The raw response data (if any).
+            response (bytes): The raw response data.
 
         Returns:
-            GaugeResponse: An error response.
+            GaugeResponse: The error response.
         """
         error_msg = f"Error: {message}"
         if response:
