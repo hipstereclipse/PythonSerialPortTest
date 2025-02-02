@@ -1,9 +1,16 @@
+"""
+config.py
+
+Contains configuration parameters for gauges including baud rates,
+command definitions, output formats, and logging setup.
+"""
+
 import logging
 from typing import Dict, Any
 
 import serial
 
-# Maps each gauge to a default output format.
+# Default output formats per gauge.
 GAUGE_OUTPUT_FORMATS = {
     "CDGxxxD": "Hex",
     "CDG025D": "Hex",
@@ -24,7 +31,7 @@ GAUGE_OUTPUT_FORMATS = {
     "TC600": "ASCII"
 }
 
-# Stores parameters for each supported gauge, including baud rates, commands, etc.
+# Gauge-specific parameters and command definitions.
 GAUGE_PARAMETERS = {
     "PCG550": {
         "baudrate": 57600,
@@ -82,8 +89,8 @@ GAUGE_PARAMETERS = {
             "unit": {"cmd": "U", "type": "read/write", "desc": "Get/set pressure unit"},
             "atm_pressure": {"cmd": "PR4", "type": "read", "desc": "Read atmospheric pressure"},
             "differential_pressure": {"cmd": "PR5", "type": "read", "desc": "Read differential pressure"},
-            "atm_zero": {"cmd": "ATZ", "type": "write", "desc": "Perform atmospheric zero"},
-            "atm_adjust": {"cmd": "ATD", "type": "write", "desc": "Perform atmospheric adjustment"}
+            "atm_zero": {"cmd": "ATZ", "type": "write", "desc": "Perform atmospheric sensor zero adjustment"},
+            "atm_adjust": {"cmd": "ATD", "type": "write", "desc": "Perform atmospheric sensor adjustment"}
         },
         "timeout": 1.0,
         "write_timeout": 1.0
@@ -118,53 +125,21 @@ GAUGE_PARAMETERS = {
             "run_hours": {"pid": 104, "cmd": 1, "desc": "Read operating hours"},
             "active_sensor": {"pid": 223, "cmd": 1, "desc": "Current active sensor (1=CCIG, 2=Pirani, 3=Mixed)"},
             "pirani_full_scale": {"pid": 33000, "cmd": 1, "desc": "Read Pirani full scale"},
-            "pirani_adjust": {"pid": 418, "cmd": 3, "desc": "Execute Pirani adjustment"}
+            "pirani_adjust": {"pid": 417, "cmd": 3, "desc": "Execute Pirani adjustment"}
         }
     },
     "BCG450": {
         "baudrate": 57600,
         "device_id": 0x0B,
         "commands": {
-            "pressure": {
-                "pid": 221,
-                "cmd": 1,
-                "desc": "Read pressure (LogFixs32en26)"
-            },
-            "temperature": {
-                "pid": 222,
-                "cmd": 1,
-                "desc": "Read temperature"
-            },
-            "sensor_status": {
-                "pid": 223,
-                "cmd": 1,
-                "desc": "Get active sensor status"
-            },
-            "serial_number": {
-                "pid": 207,
-                "cmd": 1,
-                "desc": "Read serial number"
-            },
-            "software_version": {
-                "pid": 218,
-                "cmd": 1,
-                "desc": "Read software version"
-            },
-            "error_status": {
-                "pid": 228,
-                "cmd": 1,
-                "desc": "Read error status"
-            },
-            "pirani_adjust": {
-                "pid": 418,
-                "cmd": 3,
-                "desc": "Execute Pirani adjustment"
-            },
-            "ba_degas": {
-                "pid": 529,
-                "cmd": 3,
-                "desc": "Control BA degas"
-            }
+            "pressure": {"pid": 221, "cmd": 1, "desc": "Read pressure (LogFixs32en26)"},
+            "temperature": {"pid": 222, "cmd": 1, "desc": "Read temperature"},
+            "sensor_status": {"pid": 223, "cmd": 1, "desc": "Get active sensor status"},
+            "serial_number": {"pid": 207, "cmd": 1, "desc": "Read serial number"},
+            "software_version": {"pid": 218, "cmd": 1, "desc": "Read software version"},
+            "error_status": {"pid": 228, "cmd": 1, "desc": "Read error status"},
+            "pirani_adjust": {"pid": 417, "cmd": 3, "desc": "Execute Pirani adjustment"},
+            "ba_degas": {"pid": 529, "cmd": 3, "desc": "Control BA degas"}
         },
         "rs_modes": ["RS232", "RS485"],
         "timeout": 1.0,
@@ -229,8 +204,7 @@ GAUGE_PARAMETERS = {
         "bytesize": serial.EIGHTBITS,
         "parity": serial.PARITY_NONE,
         "stopbits": serial.STOPBITS_ONE,
-        "device_id": 0x00,  # Not used for CDG protocol
-        # Added data_tx_mode command so it can be recognized
+        "device_id": 0x00,
         "commands": {
             "pressure": {"cmd": "read", "name": "pressure", "desc": "Read pressure"},
             "temperature": {"cmd": "read", "name": "temperature", "desc": "Read temperature status"},
@@ -252,7 +226,7 @@ GAUGE_PARAMETERS = {
             "data_tx_mode": {"cmd": "special", "name": "data_tx_mode", "desc": "Toggle data transmission mode"}
         },
         "rs_modes": ["RS232"],
-        "timeout": 1,  # 1 second timeout
+        "timeout": 1,
         "write_timeout": 1
     },
     "TC600": {
@@ -283,29 +257,29 @@ GAUGE_PARAMETERS = {
     }
 }
 
-# A global list of available output formats
+# Global list of available output formats.
 OUTPUT_FORMATS = ["Hex", "Binary", "ASCII", "UTF-8", "Decimal", "Raw Bytes"]
-# A global list of typical baud rates
+# Global list of common baud rates.
 BAUD_RATES = [9600, 19200, 38400, 57600, 115200]
 
 
 def setup_logging(name: str) -> logging.Logger:
     """
     Configures logging for the application.
-    We will dynamically adjust the level to DEBUG or INFO to show/hide debug messages.
+
+    Args:
+        name: The name for the logger.
+
+    Returns:
+        A configured Logger instance.
     """
     logger = logging.getLogger(name)
     logger.setLevel(logging.DEBUG)
-
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.DEBUG)
-
     formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     console_handler.setFormatter(formatter)
-
-    # Removes old handlers if any
     if logger.hasHandlers():
         logger.handlers.clear()
     logger.addHandler(console_handler)
-
     return logger

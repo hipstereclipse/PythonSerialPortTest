@@ -1,20 +1,17 @@
 """
-Defines parameter types and common command definitions that all gauge protocols can use.
-This helps avoid rewriting enumerations or min/max logic in multiple places.
+param_types.py
+
+Defines parameter types for gauge commands and a dataclass for command definitions.
 """
 
-from enum import Enum               # Imports Enum for strongly typed parameters
-from dataclasses import dataclass   # Imports dataclass for well-structured data
+from enum import Enum
+from dataclasses import dataclass
 from typing import Optional, Union
 
 
 class ParamType(Enum):
     """
-    Enumerates all parameter types that can appear in gauge commands:
-     - UINT8, UINT16, UINT32 for integer values
-     - FLOAT for floating-point values
-     - STRING for ASCII text
-     - BOOL for True/False parameters
+    Enumeration for parameter types.
     """
     UINT8 = "uint8"
     UINT16 = "uint16"
@@ -27,16 +24,7 @@ class ParamType(Enum):
 @dataclass
 class CommandDefinition:
     """
-    Stores information about a single gauge command:
-     - pid: The 'parameter ID' or code used by certain binary protocols.
-     - name: A short name for this command (e.g., "pressure").
-     - description: A helpful description of what the command does.
-     - read: Indicates if this command can read data.
-     - write: Indicates if this command can write/adjust data.
-     - continuous: Indicates if this command is valid for continuous reading.
-     - param_type: Specifies the type of parameter this command uses if it writes.
-     - min_value, max_value: (Optional) Constraints for valid parameter values.
-     - units: (Optional) Unit of measurement (e.g., "mbar", "°C").
+    Data class for storing command definitions.
     """
     pid: int
     name: str

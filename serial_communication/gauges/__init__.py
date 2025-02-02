@@ -1,7 +1,8 @@
 """
 __init__.py
 
-Initializes all gauge commands and makes them available through a single import point.
+Initializes the gauges package by importing all gauge command definitions and
+creating a mapping from gauge types to their corresponding command classes.
 """
 
 from serial_communication.gauges.commands.bcg450_commands import BCG450Command
@@ -35,12 +36,24 @@ GAUGE_COMMAND_MAP = {
     'MPG500': MPG500Command,
     'PCG550': PCG550Command,
     'PSG550': PSG550Command,
-    'PPG550': None,
-    'PPG570': None,
+    'PPG550': None,  # PPG uses ASCII commands defined in config
+    'PPG570': None,  # PPG uses ASCII commands defined in config
 }
 
+
 def get_command_class(gauge_type: str):
-    """Get the command class for a specific gauge type."""
+    """
+    Retrieves the command class for a specific gauge type.
+
+    Args:
+        gauge_type: The type of gauge.
+
+    Returns:
+        The corresponding command class.
+
+    Raises:
+        ValueError: If the gauge type is unknown.
+    """
     if gauge_type not in GAUGE_COMMAND_MAP:
         raise ValueError(f"Unknown gauge type: {gauge_type}")
     return GAUGE_COMMAND_MAP[gauge_type]

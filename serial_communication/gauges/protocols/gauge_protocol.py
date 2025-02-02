@@ -1,6 +1,9 @@
 """
-Provides the abstract base class for gauge protocols and common utility functions.
-All gauge-specific protocol implementations will inherit from GaugeProtocol.
+gauge_protocol.py
+
+Defines the abstract base class for gauge protocols.
+All gauge-specific protocol implementations inherit from this class and must implement
+the methods for initializing commands, creating command frames, and parsing responses.
 """
 
 import logging
@@ -12,9 +15,7 @@ from serial_communication.models import GaugeCommand, GaugeResponse
 
 class GaugeProtocol(ABC):
     """
-    Defines the basic interface that all gauge protocols must implement.
-    Each gauge protocol must provide ways to initialize, create commands,
-    and parse responses.
+    Abstract base class defining the interface for gauge protocols.
     """
 
     def __init__(self, address: int = 254, logger: Optional[logging.Logger] = None):
@@ -27,33 +28,54 @@ class GaugeProtocol(ABC):
     @abstractmethod
     def _initialize_commands(self):
         """
-        Initializes all relevant command definitions for the gauge.
+        Initializes all available command definitions.
         """
         pass
 
     @abstractmethod
     def create_command(self, command: GaugeCommand) -> bytes:
         """
-        Creates and returns the command bytes for the given GaugeCommand object.
+        Creates a properly formatted command frame for the given GaugeCommand.
+
+        Args:
+            command: The GaugeCommand to send.
+
+        Returns:
+            A bytes object representing the command frame.
         """
         pass
 
     @abstractmethod
     def parse_response(self, response: bytes) -> GaugeResponse:
         """
-        Parses raw response bytes from the gauge into a structured GaugeResponse.
+        Parses raw response bytes into a structured GaugeResponse.
+
+        Args:
+            response: The raw response bytes.
+
+        Returns:
+            A GaugeResponse object.
         """
         pass
 
-    def set_rs485_mode(self, enabled: bool):
+    def set_rs485_mode(self, enabled: bool) -> None:
         """
-        Enables or disables RS485 mode for the gauge.
+        Sets the RS485 mode flag.
+
+        Args:
+            enabled: True to enable RS485 mode, False for RS232.
         """
         self.rs485_mode = enabled
 
     def calculate_crc16(self, data: bytes) -> int:
         """
-        Calculates a CRC16 with the CCITT polynomial.
+        Calculates a CRC16-CCITT checksum for the given data.
+
+        Args:
+            data: The input bytes.
+
+        Returns:
+            The 16-bit checksum as an integer.
         """
         crc = 0xFFFF
         for byte in data:

@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """
-Main entry point for the Vacuum Gauge Communication Program.
-Initializes the GUI and starts the application, preserving all functionality,
-and adding a "Turbo" checkbutton that toggles a Toplevel window containing TurboFrame.
+GUI/main_app.py
 
-Removes "TC600" from the gauge dropdown so it does not appear among normal gauges,
-but still allows the TurboFrame to internally use "TC600" if defined in GAUGE_PARAMETERS.
+This module contains the GaugeApplication class that initializes the main GUI,
+manages serial connections, continuous reading, and the Turbo (advanced) window.
+It also defines the main() function to launch the application.
 """
 
 import sys
 import tkinter as tk
-from tkinter import messagebox, ttk  # <-- IMPORTANT: We import ttk here
+from tkinter import messagebox, ttk
 import logging
 from pathlib import Path
 import queue
@@ -19,48 +18,40 @@ from typing import Optional
 
 import serial.tools.list_ports
 
-# Imports your config items
 from serial_communication.config import GAUGE_PARAMETERS, GAUGE_OUTPUT_FORMATS, setup_logging
-# Imports main communicator and tester
 from serial_communication.communicator.gauge_communicator import GaugeCommunicator
 from serial_communication.communicator.gauge_tester import GaugeTester
-# Imports data models for commands/responses
 from serial_communication.models import GaugeCommand, GaugeResponse
-# Imports optional protocol factory if needed
-from serial_communication.communicator.protocol_factory import PPGProtocol
+from serial_communication.communicator.protocol_factory import get_protocol
 
-# Imports your frames
 from GUI.serial_settings_frame import SerialSettingsFrame
 from GUI.command_frame import CommandFrame
 from GUI.debug_frame import DebugFrame
 from GUI.output_frame import OutputFrame
-
-# NEW: We import TurboFrame so we can open it in a Toplevel.
 from GUI.turbo_frame import TurboFrame
 
-def setup_exception_handling(root, logger):
+
+def setup_exception_handling(root: tk.Tk, logger: logging.Logger) -> None:
     """
-    Configures a global exception handler to log errors and show user-friendly messages.
-    (Your original docstring style.)
+    Configures a global exception handler to log errors and show a user-friendly dialog.
     """
-    def show_error(msg):
-        """Shows an error dialog to the user."""
+
+    def show_error(msg: str) -> None:
         messagebox.showerror("Error", f"An error occurred: {msg}\n\nCheck the log for details.")
 
-    def handle_exception(exc_type, exc_value, exc_traceback):
-        """Logs unhandled exceptions and shows a dialog."""
+    def handle_exception(exc_type, exc_value, exc_traceback) -> None:
         if issubclass(exc_type, KeyboardInterrupt):
             root.quit()
             return
-
         logger.error("Uncaught exception:", exc_info=(exc_type, exc_value, exc_traceback))
         root.after(100, lambda: show_error(str(exc_value)))
 
     sys.excepthook = handle_exception
 
-def create_app_directories():
+
+def create_app_directories() -> tuple[Path, Path, Path]:
     """
-    Creates necessary application directories if they do not exist.
+    Creates and returns the application directories (app_dir, log_dir, config_dir).
     """
     app_dir = Path.home() / ".gauge_communicator"
     log_dir = app_dir / "logs"
@@ -71,126 +62,52 @@ def create_app_directories():
 
     return app_dir, log_dir, config_dir
 
-def main():
-    """
-    Main entry point of the application. Preserves original logic for starting the GUI.
-    """
-    # Creates directories
-    app_dir, log_dir, config_dir = create_app_directories()
-
-    # Initializes logging
-    logger = setup_logging("GaugeCommunicator")
-    logger.info("Starting Gauge Communication Program")
-
-    # Creates the main Tk window
-    root = tk.Tk()
-
-    # Sets up exception handling
-    setup_exception_handling(root, logger)
-
-    # Attempts to initialize and run the main application
-    try:
-        app = GaugeApplication(root)
-        logger.info("Application initialized successfully")
-
-        # Centers the main window
-        window_width = 800
-        window_height = 650
-        screen_width = root.winfo_screenwidth()
-        screen_height = root.winfo_screenheight()
-        center_x = int((screen_width - window_width) / 2)
-        center_y = int((screen_height - window_height) / 2)
-        root.geometry(f"{window_width}x{window_height}+{center_x}+{center_y}")
-
-        # Starts the main loop
-        root.mainloop()
-
-    except Exception as e:
-        logger.error(f"Failed to start application: {str(e)}", exc_info=True)
-        messagebox.showerror("Startup Error",
-                             f"Failed to start application: {str(e)}\n\nCheck the log for details.")
-        sys.exit(1)
-
-def on_closing(root, app):
-    """
-    Handles application shutdown.
-    """
-    try:
-        app.on_closing()
-    except Exception as e:
-        logging.error(f"Error during shutdown: {str(e)}", exc_info=True)
-    finally:
-        root.destroy()
 
 class GaugeApplication:
     """
-    Main application class for the Vacuum Gauge Communication Interface.
-    Preserves all code, removing "TC600" from gauge dropdown,
-    and adding a "Turbo" checkbutton that toggles a Toplevel window with TurboFrame.
+    The main application class for the Vacuum Gauge Communication Interface.
+    Manages connection settings, continuous reading, debug logging, and Turbo window.
     """
 
-    def __init__(self, root: tk.Tk):
-        """
-        Initializes the GaugeApplication with all original features (continuous reading, debug, commands),
-        plus a "Turbo" checkbutton to open a Toplevel window with TurboFrame.
-        """
+    def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title("Vacuum Gauge Communication Interface")
         self.root.geometry("800x650")
 
-        # Variables for user-chosen port, gauge, output format
+        # Variables for port, gauge, and output format
         self.selected_port = tk.StringVar()
-        self.selected_gauge = tk.StringVar(value="PPG550")  # Example default
+        self.selected_gauge = tk.StringVar(value="PPG550")
         self.output_format = tk.StringVar(value="ASCII")
 
-        # Variables controlling continuous reading
         self.continuous_var = tk.BooleanVar(value=False)
-        self.continuous_thread = None
+        self.continuous_thread: Optional[threading.Thread] = None
         self.response_queue = queue.Queue()
         self.update_interval = tk.StringVar(value="1000")
 
-        # Stores current serial settings
-        self.current_serial_settings = {
+        self.current_serial_settings: Dict[str, Any] = {
             'baudrate': 9600,
             'bytesize': 8,
             'parity': 'N',
             'stopbits': 1.0
         }
 
-        # The main communicator object
         self.communicator: Optional[GaugeCommunicator] = None
-
-        # For toggling debug logs
         self.show_debug = True
-
-        # For toggling a Toplevel window containing the TurboFrame
         self.turbo_window: Optional[tk.Toplevel] = None
         self.turbo_var = tk.BooleanVar(value=False)
-
-        # Creates a logger for the app
         self.logger = setup_logging("GaugeApplication")
 
-        # Builds the GUI
         self._create_gui()
+        self.output_format.trace("w", self._on_output_format_change)
+        self.selected_gauge.trace("w", self._on_gauge_change)
 
-        # Trace changes in gauge or output format
-        self.output_format.trace('w', self._on_output_format_change)
-        self.selected_gauge.trace('w', self._on_gauge_change)
-
-        # Refresh ports
         self.refresh_ports()
 
-    def _create_gui(self):
+    def _create_gui(self) -> None:
         """
-        Builds frames:
-         1) Connection frame (no "TC600") + Turbo checkbutton
-         2) SerialSettingsFrame
-         3) CommandFrame
-         4) DebugFrame
-         5) OutputFrame
-         6) Continuous reading frame
+        Builds and packs all GUI frames: Connection, Serial Settings, Commands, Debug, Output,
+        and Continuous Reading. Also creates a Turbo checkbutton.
         """
-        # === Connection Frame ===
         conn_frame = ttk.LabelFrame(self.root, text="Connection")
         conn_frame.pack(fill=tk.X, padx=5, pady=5)
 
@@ -198,13 +115,8 @@ class GaugeApplication:
         self.port_menu = ttk.OptionMenu(conn_frame, self.selected_port, "")
         self.port_menu.pack(side=tk.LEFT, padx=5)
 
-        ttk.Button(
-            conn_frame,
-            text="Refresh",
-            command=self.refresh_ports
-        ).pack(side=tk.LEFT, padx=5)
+        ttk.Button(conn_frame, text="Refresh", command=self.refresh_ports).pack(side=tk.LEFT, padx=5)
 
-        # Build a dictionary WITHOUT "TC600"
         gauge_dict = {
             "Capacitive": ["CDG025D", "CDG045D"],
             "Pirani/Capacitive": ["PCG550", "PSG550"],
@@ -213,124 +125,53 @@ class GaugeApplication:
             "Hot Cathode": ["BPG40x", "BPG552"],
             "Combination": ["BCG450", "BCG552"]
         }
-
         ttk.Label(conn_frame, text="Gauge:").pack(side=tk.LEFT, padx=5)
-
         gauge_list = []
-        for cat, arr in gauge_dict.items():
+        for arr in gauge_dict.values():
             gauge_list.extend(arr)
-
-        self.gauge_combo = ttk.Combobox(
-            conn_frame,
-            textvariable=self.selected_gauge,
-            values=gauge_list,
-            state="readonly",
-            width=20
-        )
+        self.gauge_combo = ttk.Combobox(conn_frame, textvariable=self.selected_gauge,
+                                        values=gauge_list, state="readonly", width=20)
         self.gauge_combo.pack(side=tk.LEFT, padx=5)
         if gauge_list:
             self.selected_gauge.set(gauge_list[0])
 
-        self.connect_button = ttk.Button(
-            conn_frame,
-            text="Connect",
-            command=self.connect_disconnect
-        )
+        self.connect_button = ttk.Button(conn_frame, text="Connect", command=self.connect_disconnect)
         self.connect_button.pack(side=tk.LEFT, padx=5)
 
-        # A "Turbo" checkbutton that toggles a Toplevel with TurboFrame
-        self.turbo_check = ttk.Checkbutton(
-            conn_frame,
-            text="Turbo",
-            variable=self.turbo_var,
-            command=self._toggle_turbo_window
-        )
+        self.turbo_check = ttk.Checkbutton(conn_frame, text="Turbo", variable=self.turbo_var,
+                                           command=self._toggle_turbo_window)
         self.turbo_check.pack(side=tk.LEFT, padx=5)
 
-        # === Serial Settings Frame ===
-        # Creates and configures serial settings frame
-        self.serial_frame = SerialSettingsFrame(
-            self.root,
-            self.apply_serial_settings,
-            self.send_manual_command
-        )
-        # Sets parent reference for logging
+        self.serial_frame = SerialSettingsFrame(self.root, self.apply_serial_settings, self.send_manual_command)
         self.serial_frame.set_parent(self)
         self.serial_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # === Command Frame ===
-        self.cmd_frame = CommandFrame(
-            self.root,
-            self.selected_gauge,
-            self.send_command
-        )
+        self.cmd_frame = CommandFrame(self.root, self.selected_gauge, self.send_command)
         self.cmd_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # === Debug Frame ===
-        self.debug_frame = DebugFrame(
-            self.root,
-            self.try_all_baud_rates,
-            self.send_enq,
-            self.show_port_settings,
-            self.output_format
-        )
+        self.debug_frame = DebugFrame(self.root, self.try_all_baud_rates, self.send_enq,
+                                      self.show_port_settings, self.output_format)
         self.debug_frame.pack(fill=tk.X, padx=5, pady=5)
 
-        # === Output Frame ===
-        self.output_frame = OutputFrame(
-            self.root,
-            self.output_format
-        )
+        self.output_frame = OutputFrame(self.root, self.output_format)
         self.output_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # === Continuous Reading Frame ===
-        self.continuous_frame = ttk.LabelFrame(
-            self.root,
-            text="Continuous Reading"
-        )
+        self.continuous_frame = ttk.LabelFrame(self.root, text="Continuous Reading")
         self.continuous_frame.pack(fill=tk.X, padx=5, pady=5)
-
-        ttk.Checkbutton(
-            self.continuous_frame,
-            text="View Continuous Reading",
-            variable=self.continuous_var,
-            command=self.toggle_continuous_reading
-        ).pack(side=tk.LEFT, padx=5)
-
-        ttk.Label(
-            self.continuous_frame,
-            text="Update Interval (ms):"
-        ).pack(side=tk.LEFT, padx=5)
-
-        ttk.Entry(
-            self.continuous_frame,
-            textvariable=self.update_interval,
-            width=6
-        ).pack(side=tk.LEFT, padx=5)
-
-        ttk.Button(
-            self.continuous_frame,
-            text="Update",
-            command=self._update_interval_value
-        ).pack(side=tk.LEFT, padx=5)
-
-        # Adds a data_tx_mode toggle if needed
-        self.toggle_datatx_button = ttk.Button(
-            self.continuous_frame,
-            text="Toggle DataTxMode",
-            command=self._toggle_data_tx_mode
-        )
+        ttk.Checkbutton(self.continuous_frame, text="View Continuous Reading", variable=self.continuous_var,
+                        command=self.toggle_continuous_reading).pack(side=tk.LEFT, padx=5)
+        ttk.Label(self.continuous_frame, text="Update Interval (ms):").pack(side=tk.LEFT, padx=5)
+        ttk.Entry(self.continuous_frame, textvariable=self.update_interval, width=6).pack(side=tk.LEFT, padx=5)
+        ttk.Button(self.continuous_frame, text="Update", command=self._update_interval_value).pack(side=tk.LEFT, padx=5)
+        self.toggle_datatx_button = ttk.Button(self.continuous_frame, text="Toggle DataTxMode",
+                                               command=self._toggle_data_tx_mode)
         self.toggle_datatx_button.pack(side=tk.LEFT, padx=5)
 
-        # Periodically checks queue
-        self.update_gui()
+        self.root.after(50, self.update_gui)
 
-    def _toggle_turbo_window(self):
+    def _toggle_turbo_window(self) -> None:
         """
-        Called when the user toggles the "Turbo" checkbutton.
-        If toggled ON => creates a Toplevel with TurboFrame.
-        If toggled OFF => destroys it if present.
-        Positions the new window near the center-right of main window.
+        Toggles the Turbo window. If checked, creates a Toplevel with TurboFrame.
         """
         if self.turbo_var.get():
             if not self.turbo_window:
@@ -340,33 +181,30 @@ class GaugeApplication:
                 self.turbo_window.destroy()
                 self.turbo_window = None
 
-    def _create_turbo_window(self):
+    def _create_turbo_window(self) -> None:
         """
-           Creates or shows the Turbo Controller window in a separate Toplevel.
-           This function ensures the Toplevel is titled "Turbo Controller"
-           and contains a TurboFrame that auto-resizes itself so nothing is cut off.
-           If already open, you can decide whether to bring it to front or do nothing.
-           """
+        Creates a new Toplevel window containing the TurboFrame.
+        """
         if self.turbo_window:
             self.turbo_window.lift()
             return
 
         self.turbo_window = tk.Toplevel(self.root)
         self.turbo_window.title("Turbo Controller")
-
-        from GUI.turbo_frame import TurboFrame
         turbo_frame = TurboFrame(self.turbo_window, self)
+        self.turbo_window.protocol("WM_DELETE_WINDOW", lambda: self._on_turbo_close())
 
-        def on_turbo_close():
+    def _on_turbo_close(self) -> None:
+        """
+        Called when the Turbo window is closed.
+        """
+        if self.turbo_window:
             self.turbo_window.destroy()
             self.turbo_window = None
 
-        self.turbo_window.protocol("WM_DELETE_WINDOW", on_turbo_close)
-
-    def update_gui(self):
+    def update_gui(self) -> None:
         """
-        Periodically checks the response_queue for new GaugeResponses,
-        updates the OutputFrame, reschedules itself in 50ms.
+        Periodically checks the response queue and updates the output frame.
         """
         while not self.response_queue.empty():
             try:
@@ -375,27 +213,26 @@ class GaugeApplication:
                     self.output_frame.append_log(f"\n{resp.formatted_data}")
                 else:
                     self.output_frame.append_log(f"\nError: {resp.error_message}")
-            except queue.Empty:
-                pass
-
+            except Exception:
+                break
         self.root.after(50, self.update_gui)
 
-    def _on_gauge_change(self, *args):
+    def _on_gauge_change(self, *args) -> None:
+        """
+        Called when the gauge selection changes.
+        Updates serial settings and output format based on gauge parameters.
+        """
         gauge_type = self.selected_gauge.get()
         if gauge_type in GAUGE_PARAMETERS:
             params = GAUGE_PARAMETERS[gauge_type]
             self.serial_frame.baud_var.set(str(params["baudrate"]))
-
             rs485_supported = "rs_modes" in params and "RS485" in params["rs_modes"]
             rs485_address = params.get("address", 254) if rs485_supported else 254
-
             self.serial_frame.set_rs485_mode(rs485_supported, rs485_address)
-            self.output_format.set(GAUGE_OUTPUT_FORMATS.get(gauge_type))
-
+            self.output_format.set(GAUGE_OUTPUT_FORMATS.get(gauge_type, "ASCII"))
             if not self.communicator:
                 self.continuous_frame.pack_forget()
                 self.continuous_var.set(False)
-
             self.apply_serial_settings({
                 'baudrate': params["baudrate"],
                 'bytesize': params.get("bytesize", 8),
@@ -405,7 +242,10 @@ class GaugeApplication:
                 'rs485_address': rs485_address
             })
 
-    def toggle_continuous_reading(self):
+    def toggle_continuous_reading(self) -> None:
+        """
+        Starts or stops continuous reading based on the toggle state.
+        """
         if not self.communicator:
             self.continuous_var.set(False)
             return
@@ -415,21 +255,30 @@ class GaugeApplication:
         else:
             self.stop_continuous_reading()
 
-    def start_continuous_reading(self):
+    def start_continuous_reading(self) -> None:
+        """
+        Starts a background thread for continuous reading.
+        """
         if self.continuous_thread and self.continuous_thread.is_alive():
             return
         self.communicator.set_continuous_reading(True)
         self.continuous_thread = threading.Thread(target=self.continuous_reading_thread, daemon=True)
         self.continuous_thread.start()
 
-    def stop_continuous_reading(self):
+    def stop_continuous_reading(self) -> None:
+        """
+        Stops the continuous reading thread and resets its reference.
+        """
         if self.communicator:
             self.communicator.stop_continuous_reading()
         if self.continuous_thread:
             self.continuous_thread.join(timeout=1.0)
             self.continuous_thread = None
 
-    def continuous_reading_thread(self):
+    def continuous_reading_thread(self) -> None:
+        """
+        Background thread function to perform continuous reading.
+        """
         try:
             interval_sec = int(self.update_interval.get()) / 1000.0
             self.communicator.read_continuous(lambda r: self.response_queue.put(r), interval_sec)
@@ -441,7 +290,10 @@ class GaugeApplication:
                 error_message=f"Thread error: {str(e)}"
             ))
 
-    def _update_interval_value(self):
+    def _update_interval_value(self) -> None:
+        """
+        Updates the continuous reading interval.
+        """
         try:
             val = int(self.update_interval.get())
             self.log_message(f"Update interval set to: {val} ms")
@@ -451,15 +303,16 @@ class GaugeApplication:
         except ValueError:
             self.log_message("Invalid interval value.")
 
-    def _toggle_data_tx_mode(self):
+    def _toggle_data_tx_mode(self) -> None:
+        """
+        Toggles the data transmission mode by sending a GaugeCommand.
+        """
         if not self.communicator:
             self.log_message("No active connection. Unable to toggle DataTxMode.")
             return
-
         try:
             if not hasattr(self, 'datatx_mode'):
                 self.datatx_mode = 0
-
             new_val = 1 if self.datatx_mode == 0 else 0
             cmd = GaugeCommand(
                 name="data_tx_mode",
@@ -475,7 +328,10 @@ class GaugeApplication:
         except Exception as e:
             self.log_message(f"Error toggling DataTxMode: {str(e)}")
 
-    def refresh_ports(self):
+    def refresh_ports(self) -> None:
+        """
+        Refreshes the list of available serial ports and updates the port menu.
+        """
         ports = [p.device for p in serial.tools.list_ports.comports()]
         menu = self.port_menu["menu"]
         menu.delete(0, "end")
@@ -486,7 +342,10 @@ class GaugeApplication:
         else:
             self.selected_port.set("")
 
-    def connect_disconnect(self):
+    def connect_disconnect(self) -> None:
+        """
+        Connects to the gauge if not connected; otherwise disconnects.
+        """
         if self.communicator is None:
             try:
                 self.communicator = GaugeCommunicator(
@@ -521,35 +380,45 @@ class GaugeApplication:
             except Exception as e:
                 self.log_message(f"Disconnection error: {e}")
 
-    def _on_output_format_change(self, *args):
+    def _on_output_format_change(self, *args) -> None:
+        """
+        Updates the communicator output format when the user changes the output format.
+        """
         new_fmt = self.output_format.get()
         if self.communicator:
             self.communicator.set_output_format(new_fmt)
         self.log_message(f"Output format changed to: {new_fmt}")
 
-    def apply_serial_settings(self, settings: dict):
+    def apply_serial_settings(self, settings: dict) -> None:
+        """
+        Applies updated serial settings to the communicator if connected.
+        """
         try:
             self.current_serial_settings.update(settings)
             if self.communicator and self.communicator.ser and self.communicator.ser.is_open:
-                self.communicator.ser.baudrate = settings['baudrate']
-                self.communicator.ser.bytesize = settings['bytesize']
-                self.communicator.ser.parity = settings['parity']
-                self.communicator.ser.stopbits = settings['stopbits']
+                self.communicator.ser.baudrate = settings["baudrate"]
+                self.communicator.ser.bytesize = settings["bytesize"]
+                self.communicator.ser.parity = settings["parity"]
+                self.communicator.ser.stopbits = settings["stopbits"]
 
-                if settings.get('rs485_mode', False):
+                if settings.get("rs485_mode", False):
                     self.communicator.set_rs_mode("RS485")
-                    if isinstance(self.communicator.protocol, PPGProtocol):
-                        self.communicator.protocol.address = settings.get('rs485_address', 254)
+                    from serial_communication.communicator.protocol_factory import get_protocol
+                    if hasattr(self.communicator.protocol, "address"):
+                        self.communicator.protocol.address = settings.get("rs485_address", 254)
                 else:
                     self.communicator.set_rs_mode("RS232")
 
                 self.log_message(f"Serial settings updated: {settings}")
-                if settings.get('rs485_mode', False):
+                if settings.get("rs485_mode", False):
                     self.log_message(f"RS485 Address: {settings.get('rs485_address', 254)}")
         except Exception as e:
             self.log_message(f"Failed to update serial settings: {str(e)}")
 
-    def send_command(self, command: str, response: Optional[GaugeResponse] = None):
+    def send_command(self, command: str, response: Optional[GaugeResponse] = None) -> None:
+        """
+        Logs the command and response.
+        """
         if response:
             if response.success:
                 self.log_message(f">: {command}")
@@ -559,13 +428,19 @@ class GaugeApplication:
         else:
             self.log_message(f"\nUnable to send command: {command}")
 
-    def send_manual_command(self, command: str):
-        if not hasattr(self, 'cmd_frame') or not self.cmd_frame:
+    def send_manual_command(self, command: str) -> None:
+        """
+        Delegates manual command processing to the CommandFrame.
+        """
+        if not hasattr(self, "cmd_frame") or not self.cmd_frame:
             self.log_message("CommandFrame is not available.")
             return
-        self.cmd_frame.process_command(command)
+        self.cmd_frame.send_manual_command()
 
-    def try_all_baud_rates(self):
+    def try_all_baud_rates(self) -> bool:
+        """
+        Uses GaugeTester to try a list of baud rates.
+        """
         if self.communicator:
             self.communicator.disconnect()
             self.communicator = None
@@ -574,16 +449,16 @@ class GaugeApplication:
         port = self.selected_port.get()
 
         try:
-            temp_communicator = GaugeCommunicator(
+            temp_comm = GaugeCommunicator(
                 port=port,
                 gauge_type=self.selected_gauge.get(),
                 logger=self
             )
-            temp_communicator.set_output_format(self.output_format.get())
-            tester = GaugeTester(temp_communicator, self)
+            temp_comm.set_output_format(self.output_format.get())
+            tester = GaugeTester(temp_comm, self)
             success = tester.try_all_baud_rates(port)
             if success:
-                succ_baud = temp_communicator.baudrate
+                succ_baud = temp_comm.baudrate
                 self.serial_frame.baud_var.set(str(succ_baud))
                 self.apply_serial_settings({
                     'baudrate': succ_baud,
@@ -591,18 +466,17 @@ class GaugeApplication:
                     'parity': 'N',
                     'stopbits': 1.0
                 })
-
                 test_results = tester.run_all_tests()
                 for c_name, rdict in test_results.get("commands_tested", {}).items():
                     if rdict.get("success"):
                         self.log_message(f"Test {c_name}: {rdict.get('response', 'OK')}")
                     else:
                         self.log_message(f"Test {c_name} failed: {rdict.get('error', 'Unknown error')}")
-                temp_communicator.disconnect()
+                temp_comm.disconnect()
                 return True
             else:
-                if temp_communicator.ser and temp_communicator.ser.is_open:
-                    temp_communicator.disconnect()
+                if temp_comm.ser and temp_comm.ser.is_open:
+                    temp_comm.disconnect()
                 return False
         except Exception as e:
             import traceback
@@ -610,16 +484,22 @@ class GaugeApplication:
             self.log_message(f"Traceback: {traceback.format_exc()}")
             return False
 
-    def update_continuous_visibility(self):
-        if hasattr(self, 'continuous_frame'):
+    def update_continuous_visibility(self) -> None:
+        """
+        Shows or hides the continuous reading frame based on connection and gauge support.
+        """
+        if hasattr(self, "continuous_frame"):
             if self.communicator and self.communicator.continuous_output:
                 self.continuous_frame.pack(fill="x", padx=5, pady=5)
             else:
                 self.continuous_frame.pack_forget()
                 self.continuous_var.set(False)
 
-    def send_enq(self):
-        if not self.communicator or not self.communicator.ser or not self.communicator.ser.is_open:
+    def send_enq(self) -> None:
+        """
+        Sends an ENQ command to the gauge to test connectivity.
+        """
+        if not (self.communicator and self.communicator.ser and self.communicator.ser.is_open):
             self.log_message("Not connected")
             return
         try:
@@ -632,78 +512,70 @@ class GaugeApplication:
         except Exception as e:
             self.log_message(f"ENQ test error: {str(e)}")
 
-    def show_port_settings(self):
+    def show_port_settings(self) -> None:
+        """
+        Logs the current serial port settings.
+        """
         if self.communicator and self.communicator.ser:
             ser = self.communicator.ser
             s = f"""
-                === Port Settings ===
-                Port: {ser.port}
-                Baudrate: {ser.baudrate}
-                Bytesize: {ser.bytesize}
-                Parity: {ser.parity}
-                Stopbits: {ser.stopbits}
-                Timeout: {ser.timeout}
-                XonXoff: {ser.xonxoff}
-                RtsCts: {ser.rtscts}
-                DsrDtr: {ser.dsrdtr}
-                """
+=== Port Settings ===
+Port: {ser.port}
+Baudrate: {ser.baudrate}
+Bytesize: {ser.bytesize}
+Parity: {ser.parity}
+Stopbits: {ser.stopbits}
+Timeout: {ser.timeout}
+XonXoff: {ser.xonxoff}
+RtsCts: {ser.rtscts}
+DsrDtr: {ser.dsrdtr}
+"""
             self.log_message(s)
         else:
             self.log_message("Not connected - showing saved settings:")
             s = f"""
-                === Saved Settings ===
-                Baudrate: {self.current_serial_settings['baudrate']}
-                Bytesize: {self.current_serial_settings['bytesize']}
-                Parity: {self.current_serial_settings['parity']}
-                Stopbits: {self.current_serial_settings['stopbits']}
-                RS485 Mode: {self.current_serial_settings.get('rs485_mode', False)}
-                RS485 Address: {self.current_serial_settings.get('rs485_address', 254)}
-                """
+=== Saved Settings ===
+Baudrate: {self.current_serial_settings['baudrate']}
+Bytesize: {self.current_serial_settings['bytesize']}
+Parity: {self.current_serial_settings['parity']}
+Stopbits: {self.current_serial_settings['stopbits']}
+RS485 Mode: {self.current_serial_settings.get('rs485_mode', False)}
+RS485 Address: {self.current_serial_settings.get('rs485_address', 254)}
+"""
             self.log_message(s)
 
-    def log_message(self, message: str, level: str = "INFO"):
+    def log_message(self, message: str, level: str = "INFO") -> None:
         """
-        Logs the given message at the desired logging level,
-        then appends it to the output text area with a timestamp.
-
-        message: The string to log/display.
-        level: The logging severity (e.g., "INFO", "ERROR", "DEBUG").
+        Logs a message using the app logger and appends it to the output frame.
         """
-
-        # Imports datetime for a nicely formatted timestamp
         from datetime import datetime
-
-        # Creates a timestamp string for the log line
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-        # Decides how to log internally based on the level
         if level.upper() == "ERROR":
             self.logger.error(message)
         elif level.upper() == "DEBUG":
             self.logger.debug(message)
         else:
-            # Defaults to INFO
             self.logger.info(message)
-
-        # Appends the message to the GUI's output frame, labeling it with the timestamp and level
-        # (Feel free to tweak formatting to your preference)
         self.output_frame.append_log(f"[{now}] [{level}] {message}")
 
-    def error(self, msg: str):
+    def error(self, msg: str) -> None:
         """
-        Called when code does self.logger.error(msg).
-        We'll log at ERROR level internally, and also show in the GUI.
+        Called when errors occur. Logs and shows the error message.
         """
-        # 1) Log at the app's Python logger
         self.logger.error(msg)
-        # 2) Also display it in the GUI as an error
         self.log_message(msg, level="ERROR")
 
-    def debug(self, message: str):
+    def debug(self, message: str) -> None:
+        """
+        Logs a debug message if debug level is enabled.
+        """
         if self.logger.isEnabledFor(logging.DEBUG):
             self.log_message(f"DEBUG: {message}")
 
-    def set_show_debug(self, enabled: bool):
+    def set_show_debug(self, enabled: bool) -> None:
+        """
+        Adjusts the logger level based on the debug checkbox.
+        """
         if enabled:
             self.logger.setLevel(logging.DEBUG)
             self.log_message("Show Debug: ON")
@@ -711,12 +583,26 @@ class GaugeApplication:
             self.logger.setLevel(logging.INFO)
             self.log_message("Show Debug: OFF")
 
-    def on_closing(self):
+    def on_closing(self) -> None:
+        """
+        Performs cleanup on application exit.
+        """
         if self.turbo_window:
             self.turbo_window.destroy()
             self.turbo_window = None
-
         self.stop_continuous_reading()
         if self.communicator:
             self.communicator.disconnect()
         self.root.destroy()
+
+
+def on_closing(root: tk.Tk, app: GaugeApplication) -> None:
+    """
+    Handles shutdown by calling the app's on_closing method and destroying the root.
+    """
+    try:
+        app.on_closing()
+    except Exception as e:
+        logging.error(f"Error during shutdown: {str(e)}", exc_info=True)
+    finally:
+        root.destroy()

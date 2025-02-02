@@ -1,65 +1,63 @@
-# serial_communication/models.py
-
 """
+models.py
+
 Defines core data models used throughout the application for both gauges and turbos.
-These standardized classes ensure consistent command/response handling across all devices.
+Utilizes dataclasses to enforce structure and type safety.
 """
 
-from dataclasses import dataclass     # Imports dataclass for convenient data structure creation
-from typing import Optional, Dict, Any  # Imports types for better code clarity and type hints
+from dataclasses import dataclass
+from typing import Optional, Dict, Any
+
 
 @dataclass
 class BaseCommand:
     """
-    Provides common attributes for all device commands (gauge or turbo).
-    This base class reduces code duplication and standardizes command structure.
+    Base class for device commands.
     """
-    name: str                         # Stores the command's identifier (e.g. 'pressure', 'start_pump')
-    command_type: str                 # Indicates command type ('?' for read, '!' for write)
-    parameters: Optional[Dict[str, Any]] = None  # Holds optional command parameters
-    description: str = ""             # Provides human-readable command description
+    name: str                # Command identifier (e.g., "pressure")
+    command_type: str        # "?" for read, "!" for write
+    parameters: Optional[Dict[str, Any]] = None  # Optional command parameters
+    description: str = ""    # Description of the command
 
-@dataclass 
+
+@dataclass
 class BaseResponse:
     """
-    Defines common response attributes for all devices.
-    Standardizes how we handle responses across different protocols.
+    Base class for device responses.
     """
-    raw_data: bytes                   # Stores the raw bytes received from device
-    formatted_data: str               # Contains human-readable version of response
-    success: bool                     # Indicates if command succeeded
-    error_message: Optional[str] = None  # Contains error details if command failed
+    raw_data: bytes                  # Raw response bytes
+    formatted_data: str              # Human-readable version of the response
+    success: bool                    # True if command succeeded
+    error_message: Optional[str] = None  # Error message if any
 
-# Creates gauge-specific command and response classes
+
 @dataclass
 class GaugeCommand(BaseCommand):
     """
-    Extends BaseCommand for vacuum gauge specific attributes.
-    Users can add gauge-specific parameters here if needed.
+    Gauge-specific command (inherits from BaseCommand).
     """
     pass
+
 
 @dataclass
 class GaugeResponse(BaseResponse):
     """
-    Extends BaseResponse for vacuum gauge specific attributes.
-    Users can add gauge-specific response fields here if needed.
+    Gauge-specific response (inherits from BaseResponse).
     """
     pass
 
-# Creates turbo-specific command and response classes
+
 @dataclass
 class TurboCommand(BaseCommand):
     """
-    Extends BaseCommand for turbo pump specific attributes.
-    Users can add turbo-specific parameters here if needed.
+    Turbo-specific command (inherits from BaseCommand).
     """
     pass
+
 
 @dataclass
 class TurboResponse(BaseResponse):
     """
-    Extends BaseResponse for turbo pump specific attributes.
-    Users can add turbo-specific response fields here if needed.
+    Turbo-specific response (inherits from BaseResponse).
     """
     pass
