@@ -2,26 +2,41 @@
 """
 device_simulator.py
 
-This module implements the DeviceSimulator class which simulates hardware devices
-(gauges or turbos) for testing purposes. It dynamically generates realistic responses
-and maintains an internal state so that write commands affect subsequent read commands.
-It implements the same interface as the real communicator (including connect(),
-disconnect(), send_command(), read_continuous(), stop_continuous_reading(), and set_output_format())
-so that the GUI can be used without changes when physical hardware is unavailable.
+This module implements the DeviceSimulator class which emulates hardware devices
+(gauges or turbos) for testing without physical hardware. It replicates real-world device
+behavior by dynamically generating responses and maintaining an internal state so that
+write commands affect subsequent read commands.
 
-A dummy protocol is attached for gauges so that UI components (e.g., CommandFrame)
-can access .protocol._command_defs without error.
+Features for Gauges:
+  - Supports multiple gauge types (e.g., CDG025D, CDG045D, MPG500, PPG550, etc).
+  - If the configured gauge_type starts with "CDG", a constant 9-byte continuous output
+    frame is produced to mimic a CDG gauge (including checksum calculation).
+  - For non-CDG gauges, dynamic values (pressure and temperature) are generated using
+    configurable ranges, noise, and delays.
+  - Simulated set commands (e.g., "set_pressure", "set_temperature", "data_tx_mode") update
+    internal state and return an acknowledgment.
+  - A dummy protocol object is attached (via DummyProtocol) so UI components can read
+    .protocol._command_defs without error.
+
+Features for Turbos:
+  - Simulates basic turbo parameters (speed, motor_on) with support for both read and set commands.
+  - When simulating a turbo, no physical port is required (a default dummy port is assumed).
+
+Interface:
+  Implements connect(), disconnect(), send_command(), read_continuous(), stop_continuous_reading(),
+  set_output_format(), and set_rs_mode()—matching the real communicator’s interface.
 
 Usage Example:
     simulator = DeviceSimulator(device_type="gauge", config={
-        "pressure_range": (0.1, 100),
-        "temp_range": (20, 80),
-        "response_delay": 0.1,
+        "gauge_type": "CDG045D",
+        "pressure_range": (0.1, 1000),  # in psi (or your unit)
+        "temp_range": (-50, 300),       # in °C
         "noise_level": 0.05,
-        "gauge_type": "PPG550"
+        "response_delay": 0.1,
+        "error_probability": 0.01
     })
     simulator.connect()
-    response = simulator.send_command(command)
+    response = simulator.send_command(GaugeCommand(name="pressure", command_type="?"))
     print(response.formatted_data)
 """
 
@@ -37,7 +52,7 @@ from serial_communication.config import GAUGE_PARAMETERS
 class DummyProtocol:
     """
     A dummy protocol class for simulation purposes.
-    It simply exposes a _command_defs attribute from the configuration for a given gauge type.
+    It exposes the _command_defs attribute populated from GAUGE_PARAMETERS for a given gauge type.
     """
 
     def __init__(self, gauge_type: str = "PPG550"):
@@ -46,52 +61,41 @@ class DummyProtocol:
 
 class DeviceSimulator:
     """
-    Simulates hardware devices (gauges or turbos) for testing purposes.
+    Simulates hardware devices (gauges or turbos) for testing without physical hardware.
 
-    The simulator maintains an internal state so that write commands (e.g., setting speed)
-    persist over subsequent reads. It returns randomized, plausible values based on configured ranges,
-    and simulates delays for each response.
+    For gauges:
+      - Maintains an internal state (e.g., pressure, temperature) and returns simulated values.
+      - If the gauge type (from config) starts with "CDG", returns a fixed 9-byte continuous output frame.
+      - Supports simulated set commands that update the state (e.g., "set_pressure", "set_temperature", "data_tx_mode").
 
-    This class implements the same interface as a real communicator:
-      - connect(), disconnect(), send_command(), read_continuous(), stop_continuous_reading(), set_output_format()
-    For gauge simulation, a dummy protocol is attached (accessible via .protocol).
+    For turbos:
+      - Maintains state for speed and motor state.
+      - In simulation, no physical port is required.
+
+    This class implements the communicator interface:
+      connect(), disconnect(), send_command(), read_continuous(), stop_continuous_reading(),
+      set_output_format(), and set_rs_mode().
     """
 
     def __init__(self, device_type: str = "gauge", config: Optional[Dict[str, Any]] = None,
                  logger: Optional[logging.Logger] = None):
-        """
-        Initializes the simulator.
-
-        Args:
-            device_type (str): "gauge" or "turbo"
-            config (dict, optional): Simulation parameters.
-                For gauges (default):
-                  - pressure_range: (min, max) in mbar
-                  - temp_range: (min, max) in °C
-                  - noise_level: fractional noise (default 0.05)
-                  - response_delay: seconds delay (default 0.1)
-                  - gauge_type: e.g., "PPG550" (for dummy protocol lookup)
-                For turbos (default):
-                  - speed_range: (min, max) in RPM
-                  - motor_on: initial state (default False)
-                  - noise_level: fractional noise (default 0.05)
-                  - response_delay: seconds delay (default 0.1)
-            logger (logging.Logger, optional): Logger instance.
-        """
         self.device_type = device_type.lower()
+        # Always define rs_mode for compatibility
+        self.rs_mode = "RS232"
         if self.device_type == "gauge":
             self.config = config or {
-                "pressure_range": (0.1, 100),
-                "temp_range": (20, 80),
+                "gauge_type": "PPG550",  # default gauge type; user may set to "CDG025D", "CDG045D", "MPG500", etc.
+                "pressure_range": (0.1, 1000),  # e.g., in psi
+                "temp_range": (-50, 300),  # in °C
                 "noise_level": 0.05,
                 "response_delay": 0.1,
-                "gauge_type": "PPG550"
+                "error_probability": 0.0
             }
             self.state = {
                 "pressure": random.uniform(*self.config["pressure_range"]),
-                "temperature": random.uniform(*self.config["temp_range"])
+                "temperature": random.uniform(*self.config["temp_range"]),
+                "data_tx_mode": "0"
             }
-            # Attach a dummy protocol for command definitions.
             gauge_type = self.config.get("gauge_type", "PPG550")
             self.protocol = DummyProtocol(gauge_type=gauge_type)
         elif self.device_type == "turbo":
@@ -99,41 +103,30 @@ class DeviceSimulator:
                 "speed_range": (1000, 5000),
                 "motor_on": False,
                 "noise_level": 0.05,
-                "response_delay": 0.1
+                "response_delay": 0.1,
+                "error_probability": 0.0
             }
             self.state = {
                 "speed": random.randint(*self.config["speed_range"]),
                 "motor_on": self.config.get("motor_on", False)
             }
-            self.protocol = None  # You can add a dummy protocol for turbos if needed.
+            self.protocol = None  # For turbos, no protocol definitions are needed.
         else:
             raise ValueError("Unsupported device type. Use 'gauge' or 'turbo'.")
         self.connected = False
         self.logger = logger or logging.getLogger("DeviceSimulator")
         self.logger.setLevel(logging.DEBUG)
-        # Store output format; default to "ASCII"
         self.output_format = "ASCII"
 
     def connect(self) -> bool:
-        """
-        Simulates establishing a connection.
-
-        Returns:
-            bool: True indicating a successful simulated connection.
-        """
         self.logger.debug("Simulated device connecting...")
-        time.sleep(0.1)  # Simulated delay
+        # For turbos, if no port is provided, ignore port selection.
+        time.sleep(0.1)
         self.connected = True
         self.logger.info("Simulated device connected.")
         return True
 
     def disconnect(self) -> bool:
-        """
-        Simulates disconnecting the device.
-
-        Returns:
-            bool: True if successfully disconnected.
-        """
         self.logger.debug("Simulated device disconnecting...")
         time.sleep(0.05)
         self.connected = False
@@ -141,102 +134,141 @@ class DeviceSimulator:
         return True
 
     def stop_continuous_reading(self) -> None:
-        """
-        Simulates stopping any continuous reading loops.
-        For simulation purposes, this is a no-op.
-        """
         self.logger.debug("Simulated stop continuous reading.")
 
     def set_output_format(self, fmt: str) -> None:
-        """
-        Sets the output format for simulated responses.
-        This is a stub to allow compatibility with code that calls set_output_format().
-
-        Args:
-            fmt (str): The desired output format.
-        """
         self.output_format = fmt
         self.logger.debug(f"Simulator output format set to: {fmt}")
 
+    def set_rs_mode(self, mode: str) -> None:
+        self.rs_mode = mode
+        self.logger.debug(f"Simulator RS mode set to: {mode}")
+
     def send_command(self, command: GaugeCommand) -> GaugeResponse:
-        """
-        Simulates processing a command and returns a simulated response.
-        Updates internal state for write commands and returns dynamic values for read commands.
-
-        Args:
-            command (GaugeCommand): The command to simulate.
-
-        Returns:
-            GaugeResponse: A simulated response.
-        """
         if not self.connected:
             error_msg = "Simulated device not connected."
             self.logger.error(error_msg)
             return GaugeResponse(raw_data=b"", formatted_data="", success=False, error_message=error_msg)
 
-        # Simulate response delay.
-        delay = self.config.get("response_delay", 0.1)
-        time.sleep(delay)
+        time.sleep(self.config.get("response_delay", 0.1))
         self.logger.debug(f"Simulated command received: {command.name}")
 
-        response_data = ""
+        # Simulate error response if random chance triggers it.
+        if random.random() < self.config.get("error_probability", 0.0):
+            error_text = "ERR_DISCONNECTED"
+            self.logger.debug(f"Simulated error response: {error_text}")
+            return GaugeResponse(raw_data=error_text.encode("utf-8"),
+                                 formatted_data=error_text,
+                                 success=False,
+                                 error_message=error_text)
+
+        # Handle gauge simulation.
         if self.device_type == "gauge":
-            if command.name == "pressure":
-                base = random.uniform(*self.config.get("pressure_range", (0.1, 100)))
-                noise = base * self.config.get("noise_level", 0.05)
-                self.state["pressure"] = base + random.uniform(-noise, noise)
-                response_data = f"{self.state['pressure']:.2f} mbar"
-            elif command.name == "temperature":
-                base = random.uniform(*self.config.get("temp_range", (20, 80)))
-                noise = base * self.config.get("noise_level", 0.05)
-                self.state["temperature"] = base + random.uniform(-noise, noise)
-                response_data = f"{self.state['temperature']:.1f}°C"
+            gauge_type = self.config.get("gauge_type", "PPG550")
+            if gauge_type.startswith("CDG"):
+                # Produce a constant 9-byte CDG frame.
+                start_byte = 0x07
+                page = 0x01
+                status = 0x00
+                error = 0x00
+                # Use current pressure state converted to an integer (simulate fixed measurement).
+                measurement = int(self.state.get("pressure", 30000))
+                meas_bytes = measurement.to_bytes(2, byteorder="big", signed=True)
+                cmd_code = 0x00
+                sensor_type = 0x00
+                frame = bytearray([start_byte, page, status, error])
+                frame.extend(meas_bytes)
+                frame.extend([cmd_code, sensor_type])
+                checksum = sum(frame[1:8]) & 0xFF
+                frame.append(checksum)
+                simulated_raw = bytes(frame)
+                formatted = " ".join(f"{b:02X}" for b in simulated_raw)
+                self.logger.debug(f"Simulated CDG frame: {formatted}")
+                return GaugeResponse(raw_data=simulated_raw, formatted_data=formatted, success=True)
             else:
-                response_data = f"{command.name} executed successfully"
-        elif self.device_type == "turbo":
-            if command.name == "get_speed":
-                response_data = f"{self.state.get('speed', 0)} RPM"
-            elif command.name == "set_speed" and command.command_type == "!":
-                try:
-                    new_speed = int(command.parameters.get("value", 0))
-                    low, high = self.config.get("speed_range", (1000, 5000))
-                    if new_speed < low or new_speed > high:
-                        response_data = f"Error: Speed out of range ({low}-{high} RPM)"
-                    else:
-                        self.state["speed"] = new_speed
-                        response_data = f"Speed set to {new_speed} RPM"
-                except Exception as e:
-                    response_data = f"Error: Invalid speed value ({e})"
-            elif command.name == "motor_on":
+                # For non-CDG gauges, support both read and set commands.
                 if command.command_type == "!":
-                    value = command.parameters.get("value")
-                    self.state["motor_on"] = (value == "1")
-                    response_data = f"Motor set to {'On' if self.state['motor_on'] else 'Off'}"
+                    if command.name == "data_tx_mode":
+                        new_val = command.parameters.get("value", "0")
+                        self.state["data_tx_mode"] = new_val
+                        response_data = f"DataTxMode set to {new_val}"
+                    elif command.name == "set_pressure":
+                        try:
+                            new_pressure = float(command.parameters.get("value", 0))
+                            self.state["pressure"] = new_pressure
+                            response_data = f"Pressure set to {new_pressure:.2f} psi"
+                        except Exception as e:
+                            response_data = f"Error: Invalid pressure value ({e})"
+                    elif command.name == "set_temperature":
+                        try:
+                            new_temp = float(command.parameters.get("value", 0))
+                            self.state["temperature"] = new_temp
+                            response_data = f"Temperature set to {new_temp:.1f}°C"
+                        except Exception as e:
+                            response_data = f"Error: Invalid temperature value ({e})"
+                    elif command.name == "calibrate":
+                        # Simulate calibration delay and acknowledgement.
+                        time.sleep(2.0 + random.uniform(-0.1, 0.1))
+                        response_data = "Calibration successful"
+                    else:
+                        response_data = f"{command.name} executed successfully"
                 else:
-                    response_data = "On" if self.state.get("motor_on", False) else "Off"
+                    if command.name == "pressure":
+                        base = random.uniform(*self.config.get("pressure_range", (0.1, 1000)))
+                        noise = base * self.config.get("noise_level", 0.05)
+                        self.state["pressure"] = base + random.uniform(-noise, noise)
+                        response_data = f"{self.state['pressure']:.2f} psi"
+                    elif command.name == "temperature":
+                        base = random.uniform(*self.config.get("temp_range", (-50, 300)))
+                        noise = base * self.config.get("noise_level", 0.05)
+                        self.state["temperature"] = base + random.uniform(-noise, noise)
+                        response_data = f"{self.state['temperature']:.1f}°C"
+                    else:
+                        response_data = f"{command.name} executed successfully"
+                simulated_raw = response_data.encode("utf-8")
+                self.logger.debug(f"Simulated response: {response_data}")
+                return GaugeResponse(raw_data=simulated_raw, formatted_data=response_data, success=True)
+
+        elif self.device_type == "turbo":
+            # For turbo simulation, ignore port issues.
+            if command.command_type == "!":
+                if command.name == "set_speed":
+                    try:
+                        new_speed = int(command.parameters.get("value", 0))
+                        low, high = self.config.get("speed_range", (1000, 5000))
+                        if new_speed < low or new_speed > high:
+                            response_data = f"Error: Speed out of range ({low}-{high} RPM)"
+                        else:
+                            self.state["speed"] = new_speed
+                            response_data = f"Speed set to {new_speed} RPM"
+                    except Exception as e:
+                        response_data = f"Error: Invalid speed value ({e})"
+                elif command.name == "motor_on":
+                    if command.command_type == "!":
+                        value = command.parameters.get("value")
+                        self.state["motor_on"] = (value == "1")
+                        response_data = f"Motor set to {'On' if self.state['motor_on'] else 'Off'}"
+                    else:
+                        response_data = "On" if self.state.get("motor_on", False) else "Off"
+                else:
+                    response_data = f"{command.name} executed successfully"
             else:
-                response_data = f"{command.name} executed successfully"
+                if command.name == "get_speed":
+                    response_data = f"{self.state.get('speed', 0)} RPM"
+                else:
+                    response_data = f"{command.name} executed successfully"
+            simulated_raw = response_data.encode("utf-8")
+            self.logger.debug(f"Simulated turbo response: {response_data}")
+            return GaugeResponse(raw_data=simulated_raw, formatted_data=response_data, success=True)
+
         else:
             response_data = f"{command.name} executed successfully"
-
-        # Use UTF-8 encoding to support non-ASCII characters (like the degree symbol)
-        simulated_raw = response_data.encode("utf-8")
-        self.logger.debug(f"Simulated response: {response_data}")
-        return GaugeResponse(
-            raw_data=simulated_raw,
-            formatted_data=response_data,
-            success=True
-        )
+            simulated_raw = response_data.encode("utf-8")
+            self.logger.debug(f"Simulated response: {response_data}")
+            return GaugeResponse(raw_data=simulated_raw, formatted_data=response_data, success=True)
 
     def read_continuous(self, callback: Callable[[GaugeResponse], None], update_interval: float) -> None:
-        """
-        Simulates continuous reading by periodically generating responses.
-
-        Args:
-            callback (Callable): Function to call with each simulated GaugeResponse.
-            update_interval (float): Time in seconds between responses.
-        """
         while self.connected:
-            simulated_response = self.send_command(GaugeCommand(name="pressure", command_type="?"))
-            callback(simulated_response)
+            response = self.send_command(GaugeCommand(name="pressure", command_type="?"))
+            callback(response)
             time.sleep(update_interval)

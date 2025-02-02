@@ -18,6 +18,7 @@ import queue
 import logging
 
 from serial_communication.communicator.gauge_communicator import GaugeCommunicator
+from serial_communication.device_simulator import DeviceSimulator
 from serial_communication.models import GaugeCommand, GaugeResponse
 
 from .turbo_serial_settings_frame import TurboSerialSettingsFrame
@@ -279,20 +280,22 @@ class TurboFrame(ttk.Frame):
         else:
             self._disconnect_turbo()
 
-    def _connect_turbo(self) -> None:
-        """
-        Attempts to connect to the turbo pump and updates the UI accordingly.
-        """
-        port = self.selected_port.get()
-        if not port:
-            messagebox.showerror("Turbo Error", "No port selected for Turbo.")
-            return
-        try:
+
+    def _connect_turbo(self):
+        if self.main_app.simulator_enabled:
+            self.main_app.log_message("Turbo Simulator Mode enabled: Using simulated turbo communicator.", level="INFO")
+            self.turbo_communicator = DeviceSimulator(device_type="turbo", config=None, logger=self.main_app.logger)
+        else:
+            port = self.selected_port.get()
+            if not port:
+                messagebox.showerror("Turbo Error", "No port selected for Turbo.")
+                return
             self.turbo_communicator = GaugeCommunicator(
                 port=port,
                 gauge_type=self.selected_turbo.get(),
                 logger=self.main_app
             )
+        try:
             if self.turbo_communicator.connect():
                 self.connected = True
                 self.status_text.set("Connected")
@@ -305,23 +308,16 @@ class TurboFrame(ttk.Frame):
             self.main_app.log_message(f"Turbo Connect error: {str(e)}")
             self.turbo_communicator = None
 
-    def _disconnect_turbo(self) -> None:
-        """
-        Disconnects from the turbo pump and updates the UI.
-        """
-        if self.turbo_communicator:
-            try:
+    def _disconnect_turbo(self):
+        try:
+            if self.turbo_communicator:
                 self.turbo_communicator.disconnect()
-            except Exception as e:
-                self.main_app.log_message(f"Turbo Disconnect error: {str(e)}")
-        self.turbo_communicator = None
-        self.connected = False
-        self.status_text.set("Disconnected")
-        self.connect_btn.config(text="Connect")
-        if self.cycle_var.get():
-            self.cycle_var.set(False)
-            self._toggle_cycle()
-        self.main_app.log_message("Turbo: Disconnected.")
+            self.connected = False
+            self.status_text.set("Disconnected")
+            self.connect_btn.config(text="Connect")
+            self.main_app.log_message("Turbo: Disconnected.")
+        except Exception as e:
+            self.main_app.log_message(f"Turbo Disconnect error: {str(e)}")
 
     def _check_connected(self) -> bool:
         """
