@@ -2,7 +2,14 @@
 tc600_commands.py
 
 Defines the TC600Command data class for the TC600 turbo pump controller.
-Each instance represents a command/parameter for the TC600.
+Each instance represents a command/parameter used by the TC600.
+
+Usage Example:
+    cmd = TC600Command(number=TC600CommandType.ROTATION_SPEED.value,
+                       name="get_speed",
+                       description="Read the current rotation speed in rpm",
+                       data_type="u_integer",
+                       read=True)
 """
 
 from enum import Enum
@@ -10,7 +17,7 @@ from dataclasses import dataclass
 
 class TC600CommandType(Enum):
     """
-    Enumerates known TC600 command parameter numbers.
+    Enumerates known parameter numbers (PIDs) for the TC600 pump controller.
     """
     MOTOR_PUMP = 23
     ROTATION_SPEED = 309
@@ -37,15 +44,15 @@ class TC600CommandType(Enum):
 @dataclass
 class TC600Command:
     """
-    Represents a command for the TC600 pump.
+    Represents a command for the TC600 pump controller.
 
     Attributes:
-        number: The parameter number (PID).
-        name: A short name for the command.
-        description: A description of the command.
-        data_type: The type of data (e.g., "u_integer", "string").
-        read: True if the command is readable.
-        write: True if the command is writable.
+        number: The parameter number (PID) for the command.
+        name: A short, descriptive name for the command.
+        description: A detailed description of the command.
+        data_type: The expected data type for this command's value (e.g., "u_integer", "string").
+        read: True if the command is a read command.
+        write: True if the command supports writing a new value.
     """
     number: int
     name: str

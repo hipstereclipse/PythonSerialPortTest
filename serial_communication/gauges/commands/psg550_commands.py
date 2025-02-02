@@ -1,13 +1,14 @@
-# serial_communication/gauges/commands/psg550_commands.py
 """
-Defines command definitions for PSG550 Pirani/Piezo combination gauge.
-"""
-from serial_communication.param_types import CommandDefinition, ParamType
+psg550_commands.py
 
+Defines command definitions for the PSG550 Pirani/Piezo combination gauge.
+"""
+
+from serial_communication.param_types import CommandDefinition, ParamType
 
 class PSG550Command:
     """
-    Holds command definitions for PSG550 Pirani/Piezo combination gauge.
+    Contains command definitions for the PSG550 combination gauge.
     """
     PRESSURE = CommandDefinition(
         pid=221,
@@ -17,7 +18,6 @@ class PSG550Command:
         write=False,
         continuous=True
     )
-
     TEMPERATURE = CommandDefinition(
         pid=222,
         name="temperature",
@@ -25,7 +25,6 @@ class PSG550Command:
         read=True,
         write=False
     )
-
     SOFTWARE_VERSION = CommandDefinition(
         pid=218,
         name="software_version",
@@ -33,7 +32,6 @@ class PSG550Command:
         read=True,
         write=False
     )
-
     SERIAL_NUMBER = CommandDefinition(
         pid=207,
         name="serial_number",
@@ -41,7 +39,6 @@ class PSG550Command:
         read=True,
         write=False
     )
-
     ERROR_STATUS = CommandDefinition(
         pid=228,
         name="error_status",
@@ -49,7 +46,6 @@ class PSG550Command:
         read=True,
         write=False
     )
-
     PIRANI_FULL_SCALE = CommandDefinition(
         pid=33000,
         name="pirani_full_scale",
@@ -57,11 +53,10 @@ class PSG550Command:
         read=True,
         write=False
     )
-
     PIRANI_ADJUST = CommandDefinition(
         pid=417,
         name="pirani_adjust",
-        description="Execute Pirani adjustment",
+        description="Perform Pirani adjustment",
         read=False,
         write=True
     )

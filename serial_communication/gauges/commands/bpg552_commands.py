@@ -1,11 +1,15 @@
 """
-Defines command definitions for BPG552 DualGauge.
+bpg552_commands.py
+
+Defines command definitions for BPG552 dual gauge devices.
+Uses CommandDefinition to standardize all command declarations.
 """
+
 from serial_communication.param_types import CommandDefinition, ParamType
 
 class BPG552Command:
     """
-    Stores all command definitions for Pfeiffer BPG552 DualGauge.
+    Contains command definitions for BPG552 dual gauge devices.
     """
     PRESSURE = CommandDefinition(
         pid=221,
@@ -15,6 +19,7 @@ class BPG552Command:
         write=False,
         continuous=True
     )
+
     TEMPERATURE = CommandDefinition(
         pid=222,
         name="temperature",
@@ -22,6 +27,7 @@ class BPG552Command:
         read=True,
         write=False
     )
+
     ZERO_ADJUST = CommandDefinition(
         pid=417,
         name="zero_adjust",
@@ -29,6 +35,7 @@ class BPG552Command:
         read=False,
         write=True
     )
+
     SOFTWARE_VERSION = CommandDefinition(
         pid=218,
         name="software_version",
@@ -36,6 +43,7 @@ class BPG552Command:
         read=True,
         write=False
     )
+
     SERIAL_NUMBER = CommandDefinition(
         pid=207,
         name="serial_number",
@@ -43,6 +51,7 @@ class BPG552Command:
         read=True,
         write=False
     )
+
     ERROR_STATUS = CommandDefinition(
         pid=228,
         name="error_status",
@@ -50,6 +59,7 @@ class BPG552Command:
         read=True,
         write=False
     )
+
     EMISSION_STATUS = CommandDefinition(
         pid=533,
         name="emission_status",
@@ -57,6 +67,7 @@ class BPG552Command:
         read=True,
         write=False
     )
+
     DEGAS = CommandDefinition(
         pid=529,
         name="degas",
@@ -65,6 +76,7 @@ class BPG552Command:
         write=True,
         param_type=ParamType.BOOL
     )
+
     EMISSION_CURRENT = CommandDefinition(
         pid=530,
         name="emission_current",

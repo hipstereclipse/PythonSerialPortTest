@@ -1,12 +1,15 @@
 """
+bcg450_commands.py
+
 Defines command definitions for BCG450 combination gauges.
+Each command is defined using the CommandDefinition data class.
 """
 
 from serial_communication.param_types import CommandDefinition, ParamType
 
 class BCG450Command:
     """
-    Holds command definitions for BCG450 combination gauges.
+    Contains command definitions for the BCG450 combination gauge.
     """
     PRESSURE = CommandDefinition(
         pid=221,
@@ -16,6 +19,7 @@ class BCG450Command:
         write=False,
         continuous=True
     )
+
     SENSOR_STATUS = CommandDefinition(
         pid=223,
         name="sensor_status",
@@ -23,6 +27,7 @@ class BCG450Command:
         read=True,
         write=False
     )
+
     PIRANI_ADJ = CommandDefinition(
         pid=418,
         name="pirani_adjust",
@@ -30,6 +35,7 @@ class BCG450Command:
         read=False,
         write=True
     )
+
     BA_DEGAS = CommandDefinition(
         pid=529,
         name="ba_degas",

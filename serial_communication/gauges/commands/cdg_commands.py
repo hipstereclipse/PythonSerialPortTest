@@ -1,14 +1,16 @@
 """
-Updated command definitions for CDG gauges with additional model identification support.
+cdg_commands.py
+
+Defines command definitions for CDG gauges (Capacitance Diaphragm Gauges)
+with additional support for model identification.
 """
 
 from serial_communication.param_types import CommandDefinition, ParamType
 
 class CDGCommand:
     """
-    Enhanced command definitions for all CDG gauge variants.
+    Contains enhanced command definitions for all CDG gauge variants.
     """
-    # Basic measurement commands
     PRESSURE = CommandDefinition(
         pid=0xDD,
         name="pressure",
@@ -26,7 +28,6 @@ class CDGCommand:
         write=False
     )
 
-    # Configuration and status commands
     ZERO_ADJUST = CommandDefinition(
         pid=0x02,
         name="zero_adjust",
@@ -70,11 +71,10 @@ class CDGCommand:
         param_type=ParamType.UINT8
     )
 
-    # Extended status and configuration
     DATA_TX_MODE = CommandDefinition(
         pid=0x00,
         name="data_tx_mode",
-        description="Set data transmission mode",
+        description="Toggle data transmission mode",
         read=True,
         write=True,
         param_type=ParamType.UINT8
@@ -98,7 +98,6 @@ class CDGCommand:
         param_type=ParamType.UINT16
     )
 
-    # Identification and diagnostic commands
     PRODUCTION_NUMBER = CommandDefinition(
         pid=0x19,
         name="production_number",
@@ -110,7 +109,7 @@ class CDGCommand:
     REMAINING_ZERO = CommandDefinition(
         pid=0x48,
         name="remaining_zero",
-        description="Read remaining zero adjust value",
+        description="Read remaining zero adjustment value",
         read=True,
         write=False
     )
@@ -124,14 +123,13 @@ class CDGCommand:
     )
 
     CDG_TYPE = CommandDefinition(
-        pid=0x3B,  # Address 59 in decimal
+        pid=0x3B,
         name="cdg_type",
         description="Read CDG gauge type",
         read=True,
         write=False
     )
 
-    # Model-specific configuration
     PRESSURE_RANGE = CommandDefinition(
         pid=0x38,
         name="pressure_range",
@@ -148,7 +146,6 @@ class CDGCommand:
         write=False
     )
 
-    # Special commands
     RESET = CommandDefinition(
         pid=0x00,
         name="reset",
@@ -161,7 +158,7 @@ class CDGCommand:
     FACTORY_RESET = CommandDefinition(
         pid=0x01,
         name="factory_reset",
-        description="Restore factory settings",
+        description="Restore factory defaults",
         read=False,
         write=True,
         param_type=ParamType.UINT8

@@ -1,12 +1,14 @@
 """
-Defines command definitions for PCG550 Pirani/Capacitive combination gauge.
-"""
-from serial_communication.param_types import CommandDefinition, ParamType
+pcg550_commands.py
 
+Defines command definitions for the PCG550 Pirani/Capacitive combination gauge.
+"""
+
+from serial_communication.param_types import CommandDefinition, ParamType
 
 class PCG550Command:
     """
-    Holds command definitions for PCG550 Pirani/Capacitive combination gauge.
+    Contains command definitions for the PCG550 combination gauge.
     """
     PRESSURE = CommandDefinition(
         pid=221,
@@ -16,7 +18,6 @@ class PCG550Command:
         write=False,
         continuous=True
     )
-
     TEMPERATURE = CommandDefinition(
         pid=222,
         name="temperature",
@@ -24,7 +25,6 @@ class PCG550Command:
         read=True,
         write=False
     )
-
     SOFTWARE_VERSION = CommandDefinition(
         pid=218,
         name="software_version",
@@ -32,7 +32,6 @@ class PCG550Command:
         read=True,
         write=False
     )
-
     SERIAL_NUMBER = CommandDefinition(
         pid=207,
         name="serial_number",
@@ -40,7 +39,6 @@ class PCG550Command:
         read=True,
         write=False
     )
-
     ERROR_STATUS = CommandDefinition(
         pid=228,
         name="error_status",
@@ -48,11 +46,10 @@ class PCG550Command:
         read=True,
         write=False
     )
-
     ZERO_ADJUST = CommandDefinition(
         pid=417,
         name="zero_adjust",
-        description="Execute zero adjustment",
+        description="Perform zero adjustment",
         read=False,
         write=True
     )

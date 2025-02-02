@@ -1,11 +1,14 @@
 """
-Defines command definitions for OPG550 optical plasma gauge.
+opg_commands.py
+
+Defines command definitions for the OPG550 optical plasma gauge.
 """
+
 from serial_communication.param_types import CommandDefinition
 
 class OPGCommand:
     """
-    commands for the OPG550 optical plasma gauge.
+    Contains command definitions for the OPG550 optical plasma gauge.
     """
     PRESSURE = CommandDefinition(
         pid=14000,
@@ -31,21 +34,21 @@ class OPGCommand:
     SELF_TEST = CommandDefinition(
         pid=11000,
         name="self_test",
-        description="Get self diagnostic status",
+        description="Run self diagnostic",
         read=True,
         write=False
     )
     ERROR_STATUS = CommandDefinition(
         pid=11002,
         name="error_status",
-        description="Get number of errors",
+        description="Get error count",
         read=True,
         write=False
     )
     SOFTWARE_VERSION = CommandDefinition(
         pid=10004,
         name="software_version",
-        description="Get firmware version",
+        description="Read firmware version",
         read=True,
         write=False
     )

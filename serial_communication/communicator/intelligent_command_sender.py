@@ -3,8 +3,8 @@
 intelligent_command_sender.py
 
 This module contains the IntelligentCommandSender class which is responsible for:
-  - Detecting the format of user-supplied command strings (e.g., hexadecimal, binary, decimal, ASCII).
-  - Converting these strings into the appropriate byte sequence for transmission over the serial port.
+  - Detecting the format of a user-supplied command string (e.g., hexadecimal, binary, decimal, ASCII).
+  - Converting these strings into the appropriate byte sequence for transmission over a serial port.
   - Sending manual commands via the communicator’s serial interface.
 
 Usage Example:
@@ -17,12 +17,11 @@ Usage Example:
 
 import time
 from typing import Tuple, Dict, Any
-from ..config import OUTPUT_FORMATS
-
+from ..config import OUTPUT_FORMATS  # Global list of valid output formats
 
 class IntelligentCommandSender:
     """
-    Handles detection and conversion of user command strings into byte sequences.
+    Handles the detection and conversion of user command strings into byte sequences.
     """
 
     @staticmethod
@@ -31,43 +30,43 @@ class IntelligentCommandSender:
         Determines the format of the input command string.
 
         Args:
-            input_string: The raw user input command.
+            input_string: The raw command string from the user.
 
         Returns:
             A tuple (format_type, normalized_string) where format_type is one of:
               "binary", "hex_prefixed", "hex_escaped", "decimal", "decimal_csv", "hex", or "ascii",
-              and normalized_string is the input with extraneous formatting removed.
+              and normalized_string is the input string with extraneous formatting removed.
         """
         input_string = input_string.strip()
-        # Binary: only 0's, 1's, and spaces.
+        # Check for binary format: only 0's, 1's, and spaces
         if all(c in '01 ' for c in input_string):
             return "binary", input_string.replace(" ", "")
-        # Hexadecimal with '0x' prefix.
+        # Check for hex with "0x" prefix
         if input_string.lower().startswith('0x') or ' 0x' in input_string.lower():
             return "hex_prefixed", input_string.lower().replace("0x", "").replace(" ", "")
-        # Escaped hexadecimal (e.g., "\x41\x42").
+        # Check for escaped hex (e.g., "\x41\x42")
         if '\\x' in input_string:
             return "hex_escaped", input_string.replace("\\x", "").replace(" ", "")
-        # Space-separated decimal numbers.
+        # Check for space-separated decimals
         if all(part.isdigit() for part in input_string.split()):
             return "decimal", input_string
-        # Comma-separated decimals.
+        # Check for comma-separated decimals
         if ',' in input_string and all(part.strip().isdigit() for part in input_string.split(',')):
             return "decimal_csv", input_string
-        # Check if valid hex string without prefix.
+        # Check for a valid hex string without prefix
         if all(c in '0123456789ABCDEFabcdef ' for c in input_string):
             return "hex", input_string.replace(" ", "")
-        # Default to ASCII.
+        # Otherwise, treat as ASCII
         return "ascii", input_string
 
     @staticmethod
     def convert_to_bytes(format_type: str, input_string: str) -> bytes:
         """
-        Converts the normalized input string to a byte sequence based on the detected format.
+        Converts the normalized input string to bytes based on its detected format.
 
         Args:
-            format_type: The detected format (e.g., "binary", "hex", etc.).
-            input_string: The normalized string.
+            format_type: The detected format ("binary", "hex", etc.).
+            input_string: The normalized string to convert.
 
         Returns:
             A bytes object representing the command.
@@ -77,10 +76,13 @@ class IntelligentCommandSender:
         """
         try:
             if format_type == "binary":
-                # Ensure the binary string length is a multiple of 8 bits.
+                # Ensure the binary string length is a multiple of 8
                 while len(input_string) % 8 != 0:
                     input_string += '0'
-                return bytes(int(input_string[i:i+8], 2) for i in range(0, len(input_string), 8))
+                return bytes(
+                    int(input_string[i:i+8], 2)
+                    for i in range(0, len(input_string), 8)
+                )
             elif format_type in ["hex", "hex_prefixed", "hex_escaped"]:
                 return bytes.fromhex(input_string)
             elif format_type in ["decimal", "decimal_csv"]:
@@ -99,13 +101,13 @@ class IntelligentCommandSender:
     @staticmethod
     def format_output_suggestion(raw_response: bytes) -> str:
         """
-        Suggests the best output format based on the content of the raw response.
+        Suggests the best output format based on the content of the raw response bytes.
 
         Args:
             raw_response: The raw response bytes.
 
         Returns:
-            A string such as "ASCII" or "Hex" suggesting the best display format.
+            A string indicating the suggested output format (e.g., "ASCII" or "Hex").
         """
         if not raw_response:
             return "Hex"
@@ -124,21 +126,21 @@ class IntelligentCommandSender:
     @staticmethod
     def send_manual_command(communicator, input_string: str, force_format: str = None) -> Dict[str, Any]:
         """
-        Interprets and sends the user-supplied command string via the communicator.
+        Interprets and sends a manual command via the communicator.
 
         Args:
             communicator: An instance of GaugeCommunicator.
-            input_string: The command string provided by the user (e.g., "0xAA BB CC").
-            force_format: If provided, forces the output format (e.g., "ASCII", "Hex").
+            input_string: The command string provided by the user.
+            force_format: Optional; forces a particular output format.
 
         Returns:
-            A dictionary with the following keys:
-                - success: True if the command was sent and a response was received.
-                - error: Any error message encountered.
-                - response_raw: The raw response as a hexadecimal string.
-                - response_formatted: The response formatted according to the selected output format.
-                - input_format_detected: The format detected from the input.
-                - rs_mode: The current RS mode from the communicator.
+            A dictionary with keys:
+              - "success": Boolean indicating success.
+              - "error": An error message if any.
+              - "response_raw": Raw response as a hex string.
+              - "response_formatted": Response formatted per the chosen output format.
+              - "input_format_detected": The detected input format.
+              - "rs_mode": The communicator’s current RS mode.
         """
         try:
             input_format, normalized = IntelligentCommandSender.detect_format(input_string)
@@ -152,10 +154,8 @@ class IntelligentCommandSender:
                 "rs_mode": communicator.rs_mode
             }
             if communicator.ser and communicator.ser.is_open:
-                # Clear buffers before sending.
                 communicator.ser.reset_input_buffer()
                 communicator.ser.reset_output_buffer()
-                # For RS485, adjust RTS settings if applicable.
                 if communicator.rs_mode == "RS485":
                     if hasattr(communicator.ser, 'rs485_mode'):
                         communicator.ser.rs485_mode = communicator.rs485_config

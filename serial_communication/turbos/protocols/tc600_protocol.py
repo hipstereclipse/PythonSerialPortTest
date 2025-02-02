@@ -1,20 +1,22 @@
+#!/usr/bin/env python3
 """
 tc600_protocol.py
 
-Implements the TC600Protocol for the TC600 turbo pump controller.
-Handles command creation and response parsing according to TC600 specifications.
+Implements the protocol for the TC600 turbo pump controller.
+Handles command creation, parameter encoding, response parsing, and error handling.
+Commands are formatted as ASCII strings with a checksum and terminator.
 """
 
-from typing import Dict, Any, Optional, List
 import struct
+from typing import Dict, Any, Optional, List
+import logging
 
 from serial_communication.turbos.protocols.turbo_protocol import TurboProtocol
 from serial_communication.models import TurboCommand, TurboResponse
 
-
 class TC600Protocol(TurboProtocol):
     """
-    Implements protocol logic for the TC600 turbo pump controller.
+    Protocol implementation for the TC600 pump controller.
     """
 
     def __init__(self, address: int = 1, logger: Optional[Any] = None):
@@ -22,24 +24,17 @@ class TC600Protocol(TurboProtocol):
         Initializes the TC600Protocol.
 
         Args:
-            address: The device address (default 1).
-            logger: Optional logger.
+            address (int): The device address (default: 1).
+            logger (Optional[Any]): Logger instance.
         """
         super().__init__(address, logger)
         self.device_type = "TC600"
         self.current_command = None
 
-    def _initialize_commands(self):
+    def _initialize_commands(self) -> None:
         """
-        Initializes the dictionary of TC600 command definitions.
-        Each key is a command name (used externally) and each value is a dictionary containing:
-          - pid: Parameter ID.
-          - desc: Description.
-          - type: Data type (e.g., "u_integer", "u_real", "boolean_old", "string").
-          - write: Whether the command is writable.
-          - options (optional): List of allowed values.
-          - min, max (optional): Numeric limits.
-          - unit (optional): Unit of measure.
+        Initializes a dictionary of TC600 command definitions.
+        Each definition includes the parameter ID (pid), a description, data type, and flags for read/write.
         """
         self._command_defs = {
             "get_speed": {
@@ -49,7 +44,7 @@ class TC600Protocol(TurboProtocol):
             },
             "set_speed": {
                 "pid": 308,
-                "desc": "Set the turbo rotation speed (percent of max)",
+                "desc": "Set turbo rotation speed (percent of max)",
                 "type": "u_integer",
                 "write": True,
                 "min": 0,
@@ -64,7 +59,7 @@ class TC600Protocol(TurboProtocol):
             },
             "motor_on": {
                 "pid": 23,
-                "desc": "Switch motor/pump on or off",
+                "desc": "Switch pump motor on/off",
                 "type": "boolean_old",
                 "write": True,
                 "options": ["0", "1"],
@@ -90,17 +85,17 @@ class TC600Protocol(TurboProtocol):
             },
             "get_error": {
                 "pid": 303,
-                "desc": "Read current error code",
+                "desc": "Read error code",
                 "type": "u_integer"
             },
             "get_warning": {
                 "pid": 305,
-                "desc": "Read current warning status",
+                "desc": "Read warning status",
                 "type": "u_integer"
             },
             "operating_hours": {
                 "pid": 311,
-                "desc": "Read total operating hours",
+                "desc": "Read operating hours",
                 "type": "u_integer"
             },
             "set_runup_time": {
@@ -112,6 +107,12 @@ class TC600Protocol(TurboProtocol):
                 "min": 1,
                 "max": 1200
             },
+            "standby_speed": {
+                "pid": 707,
+                "desc": "Set standby rotation speed (%)",
+                "type": "u_integer",
+                "write": True
+            },
             "vent_mode": {
                 "pid": 30,
                 "desc": "Set venting valve mode",
@@ -122,7 +123,7 @@ class TC600Protocol(TurboProtocol):
             },
             "vent_time": {
                 "pid": 721,
-                "desc": "Set venting duration (seconds)",
+                "desc": "Set venting time (seconds)",
                 "type": "u_integer",
                 "write": True,
                 "unit": "sec",
@@ -131,7 +132,7 @@ class TC600Protocol(TurboProtocol):
             },
             "firmware_version": {
                 "pid": 312,
-                "desc": "Read firmware version string",
+                "desc": "Read firmware version",
                 "type": "string"
             },
             "pump_type": {
@@ -141,7 +142,7 @@ class TC600Protocol(TurboProtocol):
             },
             "station_number": {
                 "pid": 797,
-                "desc": "Set station number/address",
+                "desc": "Set station address",
                 "type": "u_integer",
                 "write": True,
                 "min": 1,
@@ -167,77 +168,81 @@ class TC600Protocol(TurboProtocol):
 
     def create_command(self, command: TurboCommand) -> bytes:
         """
-        Creates a command string for the TC600 controller.
-        For write commands, encodes the parameter value according to its type.
-        Appends a checksum and terminator.
+        Constructs a command frame for the TC600 controller.
+        For write commands, parameters are encoded as fixed-width ASCII strings.
+        The final command is terminated by a carriage return after appending a 3-digit checksum.
 
         Args:
-            command: The TurboCommand to send.
+            command (TurboCommand): The turbo command to serialize.
 
         Returns:
-            The command as bytes.
+            bytes: The ASCII-encoded command frame.
         """
         if command.name not in self._command_defs:
             raise ValueError(f"Unknown command: {command.name}")
         cmd_info = self._command_defs[command.name]
         self.current_command = command.name
+
+        # Format the address (always 3 digits in RS485 mode; else default "254")
         addr = f"{self.address:03d}"
         action = "10" if command.command_type == "!" else "00"
         param = f"{cmd_info['pid']:03d}"
+
         if command.command_type == "!":
-            value = command.parameters.get('value', 0)
-            data_bytes = self._encode_value(value, cmd_info.get('type'))
+            value = command.parameters.get("value", 0)
+            data_bytes = self._encode_value(value, cmd_info.get("type"))
             data_len = f"{len(data_bytes):02d}"
             msg = f"{addr}{action}{param}{data_len}{data_bytes}"
         else:
             msg = f"{addr}{action}{param}02=?"
-        checksum = sum(msg.encode('ascii')) % 256
+
+        # Calculate checksum as the sum of the ASCII values modulo 256.
+        checksum = sum(msg.encode("ascii")) % 256
         msg = f"{msg}{checksum:03d}\r"
-        return msg.encode('ascii')
+        return msg.encode("ascii")
 
     def parse_response(self, response: bytes) -> Dict[str, Any]:
         """
-        Parses the response from the TC600 controller.
-        Extracts components from the ASCII response string and handles error conditions.
+        Parses the ASCII response from the TC600 controller.
 
         Args:
-            response: The raw response bytes.
+            response (bytes): The raw response.
 
         Returns:
-            A dictionary with parsed response data.
+            dict: Parsed response data.
         """
         try:
-            resp_str = response.decode('ascii').strip()
+            resp_str = response.decode("ascii").strip()
             if len(resp_str) < 10:
-                return self._error_response("Response too short")
+                return self._error_response("Response too short", response)
             addr = resp_str[0:3]
             action = resp_str[3:5]
             param = resp_str[5:8]
             data = resp_str[10:-4] if len(resp_str) > 12 else ""
             if "NO_DEF" in resp_str:
-                return self._error_response("Parameter does not exist")
+                return self._error_response("Parameter does not exist", response)
             if "_RANGE" in resp_str:
-                return self._error_response("Value out of range")
+                return self._error_response("Value out of range", response)
             if "_LOGIC" in resp_str:
-                return self._error_response("Command logic error")
+                return self._error_response("Command logic error", response)
             return {
                 "success": True,
                 "raw_data": response,
                 "formatted_data": self._format_response_data(data)
             }
         except Exception as e:
-            return self._error_response(f"Parse error: {str(e)}")
+            return self._error_response(f"Parse error: {str(e)}", response)
 
     def _encode_value(self, value: Any, data_type: str) -> str:
         """
-        Encodes a parameter value into the TC600 format.
+        Encodes a value for a write command into a fixed-width string based on its type.
 
         Args:
             value: The value to encode.
-            data_type: The expected data type (e.g., "boolean_old", "u_integer", "u_real", "string").
+            data_type (str): The type of the value (e.g., "boolean_old", "u_integer", "u_real", "string").
 
         Returns:
-            A string representing the encoded value.
+            str: The encoded value as a string.
 
         Raises:
             ValueError: If the data type is unsupported.
@@ -259,43 +264,33 @@ class TC600Protocol(TurboProtocol):
         Formats the response data based on the current command.
 
         Args:
-            data: The raw data string extracted from the response.
+            data (str): The raw data string from the response.
 
         Returns:
-            A formatted string with units or a simple value.
+            str: A formatted string including units if applicable.
         """
         if not data or data.isspace():
             return "No data"
         cmd_info = self._command_defs.get(self.current_command, {})
         if len(data) == 6 and all(c in "01" for c in data):
             return "On" if data == "111111" else "Off"
-        if cmd_info.get('type') in ['u_integer', 'u_real']:
+        if cmd_info.get("type") in ["u_integer", "u_real"]:
             try:
                 value = int(data)
                 if self.current_command == "get_speed":
                     return f"{value} RPM"
-                elif 'unit' in cmd_info:
+                elif "unit" in cmd_info:
                     return f"{value} {cmd_info['unit']}"
                 return str(value)
             except ValueError:
                 pass
         return data
 
-    def _error_response(self, message: str) -> Dict[str, Any]:
+    def _error_response(self, message: str, response: bytes) -> Dict[str, Any]:
         self.logger.error(message)
         return {
             "success": False,
             "error": message,
-            "raw_data": b"",
+            "raw_data": response,
             "formatted_data": f"Error: {message}"
         }
-
-    def test_commands(self) -> List[bytes]:
-        """
-        Generates a list of test command frames for connection testing.
-
-        Returns:
-            A list of command bytes.
-        """
-        self._response_validation_enabled = False
-        return [self.create_command(TurboCommand(name="get_speed", command_type="?"))]
